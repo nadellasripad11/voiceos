@@ -468,8 +468,8 @@ window.voiceos.onSessionIdle(({ hotkeys, position } = {}) => {
   setState('idle', {
     label: 'VoiceOS',
     hint: agent
-      ? `${prettyKey(dictate)} dictate · ${prettyKey(agent)} ask`
-      : `Press ${prettyKey(dictate)} to dictate`
+      ? `Hold ${prettyKey(dictate)} to speak · ${prettyKey(agent)} to ask`
+      : `Hold ${prettyKey(dictate)} to speak`
   });
 });
 

@@ -10,11 +10,12 @@ const DEFAULTS = {
   onboarded: false,
 
   hotkeys: {
-    // Ctrl+Shift drives Dictation, Ctrl+Alt drives Agent.
-    dictationToggle: 'Control+Shift+Space',
-    agentToggle: 'Control+Alt+Space',
-    editToggle: 'Control+Shift+E',
-    cancel: 'Escape'
+    // Hold-to-talk, modifier only: hold both keys to speak, release to finish.
+    // These are handled by a low-level keyboard hook, not by Electron
+    // accelerators, which cannot express a modifier-only chord.
+    dictation: 'Ctrl+Shift',
+    agent: 'Ctrl+Alt',
+    mode: 'hold'
   },
 
   // Defaults below are measured, not guessed. On this class of machine

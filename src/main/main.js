@@ -25,6 +25,7 @@ const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { getBrowser } = require('../core/browser/cdp');
 const { createLogger } = require('./logger');
+const { HoldToTalk } = require('./hotkeys');
 
 const isDev = process.argv.includes('--dev');
 const logger = createLogger({ dir: paths.logs, level: isDev ? 'debug' : 'info' });
@@ -473,54 +474,47 @@ function broadcast(channel, payload) {
  * firmware consumes it before the OS sees it), which is why the default differs
  * from the Mac product.
  */
-/**
- * Fallbacks tried when the preferred accelerator is already owned by another
- * application. Windows gives no way to discover who holds a chord, and
- * globalShortcut.register simply returns false, so a silently dead hotkey is
- * the failure mode to avoid: the feature would look broken with no explanation.
- */
-const HOTKEY_FALLBACKS = {
-  dictation: ['Control+Shift+Space', 'Control+Shift+D', 'Alt+Shift+Space', 'F8'],
-  agent: ['Control+Alt+Space', 'Control+Alt+A', 'Control+Shift+A', 'Alt+Shift+A', 'F9'],
-  edit: ['Control+Shift+E', 'Control+Alt+E', 'F10']
-};
+/** The hold-to-talk hook. Modifier-only chords, press and release. */
+let holdToTalk = null;
 
-/** Which accelerator each mode actually ended up on, for the UI to display. */
-let activeHotkeys = {};
+/** What the UI should display. Kept in the shape the renderers already expect. */
+let activeHotkeys = { dictation: 'Ctrl+Shift', agent: 'Ctrl+Alt', edit: null };
 
 function registerHotkeys() {
   globalShortcut.unregisterAll();
-  activeHotkeys = {};
-  const keys = config.get('hotkeys');
 
-  const bind = (preferred, handler, label) => {
-    // Try the user's choice first, then the known-good alternatives.
-    const candidates = [preferred, ...(HOTKEY_FALLBACKS[label] || [])]
-      .filter(Boolean)
-      .filter((v, i, a) => a.indexOf(v) === i);
+  if (!holdToTalk) {
+    holdToTalk = new HoldToTalk({
+      logger,
+      onStart: (mode) => startSession(mode),
+      onStop: () => stopSession()
+    });
+  }
 
-    for (const accelerator of candidates) {
-      try {
-        if (globalShortcut.register(accelerator, handler)) {
-          activeHotkeys[label] = accelerator;
-          if (accelerator !== preferred) {
-            logger.warn(`${label} hotkey '${preferred}' is taken by another app; using '${accelerator}' instead`);
-          } else {
-            logger.info(`hotkey ${label}: ${accelerator}`);
-          }
-          return;
-        }
-      } catch (err) {
-        logger.debug(`invalid ${label} hotkey '${accelerator}': ${err.message}`);
+  const ok = holdToTalk.running || holdToTalk.start();
+  if (ok) {
+    activeHotkeys = { dictation: 'Ctrl+Shift', agent: 'Ctrl+Alt', edit: null };
+    return;
+  }
+
+  // The keyboard hook could not start, so fall back to accelerators. They need
+  // a real key on the end, and they toggle rather than hold.
+  logger.warn('falling back to toggle shortcuts; hold-to-talk needs the keyboard hook');
+  const fallbacks = [
+    ['dictation', 'Control+Shift+Space'],
+    ['agent', 'Control+Alt+A']
+  ];
+  activeHotkeys = { dictation: null, agent: null, edit: null };
+  for (const [mode, accelerator] of fallbacks) {
+    try {
+      if (globalShortcut.register(accelerator, () => toggleSession(mode))) {
+        activeHotkeys[mode] = accelerator;
+        logger.info(`hotkey ${mode}: ${accelerator}`);
       }
+    } catch (err) {
+      logger.warn(`could not bind ${mode}: ${err.message}`);
     }
-    activeHotkeys[label] = null;
-    logger.error(`could not bind any hotkey for ${label}; tried ${candidates.join(', ')}`);
-  };
-
-  bind(keys.dictationToggle, () => toggleSession('dictation'), 'dictation');
-  bind(keys.agentToggle, () => toggleSession('agent'), 'agent');
-  bind(keys.editToggle, () => toggleSession('edit'), 'edit');
+  }
 }
 
 function toggleSession(mode) {
@@ -696,6 +690,7 @@ function registerIpc() {
       bridge: { available: services.bridge.available, running: Boolean(services.bridge.proc) },
       tts: services.tts.status(),
       hotkeys: activeHotkeys,
+      holdToTalk: holdToTalk ? holdToTalk.status() : { available: false },
       paths: { userData: paths.userData, models: paths.models, logs: paths.logs }
     };
   });
@@ -1001,6 +996,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    if (holdToTalk) holdToTalk.shutdown();
     if (services.bridge) services.bridge.stop();
   });
 }

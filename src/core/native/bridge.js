@@ -231,6 +231,8 @@ class NativeBridge {
   }
 
   keys(combo) { return this.call('keys', { combo }); }
+  keyDown(combo) { return this.call('keyDown', { combo }); }
+  keyUp(combo) { return this.call('keyUp', { combo }); }
   focusWindow(hwnd) { return this.call('focusWindow', { hwnd }); }
 
   screenshot(filePath, region) { return this.call('screenshot', { path: filePath, region }, { timeoutMs: 30000 }); }

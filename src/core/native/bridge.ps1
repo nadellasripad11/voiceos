@@ -70,6 +70,20 @@ public class VOSNative {
         return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
     }
 
+    // Press without releasing, so a chord can be held. Releasing is a separate
+    // call, which is what makes hold-to-talk testable.
+    public static uint KeyDown(ushort[] vks) {
+        INPUT[] inputs = new INPUT[vks.Length];
+        for (int k = 0; k < vks.Length; k++) inputs[k] = KeyInput(vks[k], 0, 0);
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    public static uint KeyUp(ushort[] vks) {
+        INPUT[] inputs = new INPUT[vks.Length];
+        for (int k = 0; k < vks.Length; k++) inputs[k] = KeyInput(vks[vks.Length - 1 - k], 0, KEYEVENTF_KEYUP);
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
     // Unicode synthesis, one UTF-16 code unit at a time. Works in fields that
     // reject clipboard paste, and handles surrogate pairs (emoji) correctly
     // because each code unit is sent as its own event.
@@ -411,6 +425,11 @@ function Invoke-BridgeCommand($req) {
       return @{ ok = $true; x = $p.X; y = $p.Y }
     }
 
+    'setCursorPos' {
+      [void][VOSNative]::SetCursorPos([int]$req.x, [int]$req.y)
+      return @{ ok = $true }
+    }
+
     'getForeground' {
       return @{ ok = $true; window = (Describe-Window ([VOSNative]::GetForegroundWindow())) }
     }
@@ -486,6 +505,16 @@ function Invoke-BridgeCommand($req) {
 
     'keys' {
       [void][VOSNative]::KeyCombo((Resolve-Combo $req.combo))
+      return @{ ok = $true }
+    }
+
+    'keyDown' {
+      [void][VOSNative]::KeyDown((Resolve-Combo $req.combo))
+      return @{ ok = $true }
+    }
+
+    'keyUp' {
+      [void][VOSNative]::KeyUp((Resolve-Combo $req.combo))
       return @{ ok = $true }
     }
 
@@ -568,7 +597,16 @@ function Invoke-BridgeCommand($req) {
 
     'listWindows' {
       $wins = Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } |
-        ForEach-Object { @{ hwnd = [int64]$_.MainWindowHandle; title = $_.MainWindowTitle; process = $_.ProcessName } }
+        ForEach-Object {
+          $r = New-Object VOSNative+RECT
+          [void][VOSNative]::GetWindowRect($_.MainWindowHandle, [ref]$r)
+          @{
+            hwnd = [int64]$_.MainWindowHandle
+            title = $_.MainWindowTitle
+            process = $_.ProcessName
+            bounds = @{ x = $r.Left; y = $r.Top; width = ($r.Right - $r.Left); height = ($r.Bottom - $r.Top) }
+          }
+        }
       return @{ ok = $true; windows = @($wins) }
     }
 

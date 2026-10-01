@@ -90,6 +90,53 @@ const systemTools = (ctx) => [
     }
   },
   {
+    name: 'point_and_ask',
+    appId: 'system',
+    description:
+      'Identify or explain whatever is under the mouse cursor right now. Use this whenever the user says ' +
+      '"this", "that", "him", "her", or "it" without naming what they mean, for example "who is that", ' +
+      '"what is this", "what does that say".',
+    parameters: obj({ question: str('What the user actually asked') }),
+    run: async ({ question } = {}) => {
+      if (ctx.config.get('privacy.privateMode')) {
+        return { ok: false, summary: 'Private Mode is on, so I cannot look at the screen.' };
+      }
+
+      const context = await readCursorContext(ctx);
+      if (!context.element && !context.text) {
+        return { ok: false, summary: 'I could not tell what is under your cursor.' };
+      }
+
+      // With a model available the agent reasons over this; without one, saying
+      // exactly what is under the cursor is still a useful answer.
+      const parts = [];
+      if (context.element && context.element.name) {
+        parts.push(`Under the cursor: "${context.element.name}" (${context.element.controlType || 'element'}).`);
+      }
+      if (context.element && context.element.value) {
+        parts.push(`Its contents: ${String(context.element.value).slice(0, 600)}`);
+      }
+      if (context.text) {
+        parts.push(`Text around the cursor:
+${context.text.slice(0, 2500)}`);
+      }
+      if (context.window) {
+        parts.push(`Window: ${context.window.title} (${context.window.process}).`);
+      }
+
+      return {
+        ok: true,
+        summary: parts.join('\n\n'),
+        found: [{
+          glyph: '🎯',
+          title: (context.element && context.element.name) || 'What you pointed at',
+          subtitle: context.window ? `${context.window.process} · ${context.lines} lines read` : `${context.lines} lines read`
+        }],
+        context
+      };
+    }
+  },
+  {
     name: 'read_selection',
     appId: 'system',
     description: 'Read the text the user currently has selected.',
@@ -119,6 +166,50 @@ const systemTools = (ctx) => [
     }
   }
 ];
+
+/**
+ * Gathers what is under the mouse pointer.
+ *
+ * Three sources, cheapest first: the accessibility element under the point,
+ * which gives exact text when the app exposes it; the window it belongs to; and
+ * an OCR pass over a region around the cursor, which works even when the app
+ * exposes nothing. The OCR region is deliberately a crop rather than the whole
+ * screen, both because it is far faster and because it keeps unrelated parts of
+ * the display out of the context.
+ */
+async function readCursorContext(ctx, { radiusX = 620, radiusY = 380 } = {}) {
+  const out = { element: null, window: null, text: '', lines: 0, at: null };
+
+  const pos = await ctx.bridge.cursorPos();
+  out.at = pos;
+
+  try {
+    out.element = await ctx.bridge.elementAt(pos.x, pos.y);
+  } catch { /* some surfaces expose nothing */ }
+
+  try {
+    out.window = await ctx.bridge.windowAt(pos.x, pos.y);
+  } catch {}
+
+  const shot = path.join(paths.tmp, `point-${Date.now()}.png`);
+  try {
+    const region = {
+      x: Math.max(0, pos.x - radiusX),
+      y: Math.max(0, pos.y - radiusY),
+      width: radiusX * 2,
+      height: radiusY * 2
+    };
+    const r = await ctx.bridge.ocrScreen(shot, region);
+    out.text = (r.text || '').replace(/\s+/g, ' ').trim();
+    out.lines = (r.lines || []).length;
+  } catch (err) {
+    ctx.logger.warn?.(`[point] OCR failed: ${err.message}`);
+  } finally {
+    fs.rmSync(shot, { force: true });
+  }
+
+  return out;
+}
 
 // --- Media ----------------------------------------------------------------
 
@@ -508,6 +599,7 @@ function toolSchemas(tools) {
 }
 
 module.exports = {
+  readCursorContext,
   buildTools,
   toolSchemas,
   duckDuckGo,

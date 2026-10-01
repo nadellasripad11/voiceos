@@ -17,6 +17,7 @@
  * approval, unless the tool is marked autoConfirm and the user has allowed that.
  */
 const { buildTools, toolSchemas } = require('./tools');
+const { matchIntent, INTENTS } = require('./intents');
 
 const SYSTEM_PROMPT = `You are VoiceOS, a voice assistant running on the user's own computer.
 
@@ -201,97 +202,6 @@ class Agent {
   }
 
   clearHistory() { this.history = []; }
-}
-
-// --- Deterministic routing -------------------------------------------------
-
-/**
- * Patterns for the things people genuinely say to a voice assistant.
- *
- * Each returns the tool name and arguments. Order matters: the first match
- * wins, so more specific patterns are listed first.
- */
-const INTENTS = [
-  // Media
-  { re: /^(what(?:'s| is)?\s+(?:this\s+)?(?:song|track|playing|music)|who sings this|what am i listening to)/i,
-    tool: 'now_playing' },
-  { re: /^(pause|stop)\s*(the\s*)?(music|song|playback|spotify|it)?$/i,
-    tool: 'control_playback', args: () => ({ action: 'pause' }) },
-  { re: /^(play|resume|unpause)\s*(the\s*)?(music|song|playback|spotify|it)?$/i,
-    tool: 'control_playback', args: () => ({ action: 'play' }) },
-  { re: /(next|skip)\s*(song|track|this)?/i,
-    tool: 'control_playback', args: () => ({ action: 'next' }) },
-  { re: /(previous|last|go back a)\s*(song|track)/i,
-    tool: 'control_playback', args: () => ({ action: 'previous' }) },
-
-  // Volume
-  { re: /(turn (it|the volume) up|louder|volume up)/i,
-    tool: 'set_volume', args: () => ({ direction: 'up' }) },
-  { re: /(turn (it|the volume) down|quieter|volume down)/i,
-    tool: 'set_volume', args: () => ({ direction: 'down' }) },
-  { re: /^(mute|unmute|silence)/i,
-    tool: 'set_volume', args: () => ({ direction: 'mute' }) },
-
-  // Apps and pages
-  { re: /^(?:open|launch|start)\s+(?:the\s+)?(?:app\s+)?(.+?)[.?!]?$/i,
-    tool: 'open_app',
-    args: (m) => ({ name: m[1].trim() }),
-    // "open youtube.com" is a page, not an app.
-    guard: (m) => !/\.(com|org|net|io|dev|edu|gov)\b/i.test(m[1])
-  },
-  { re: /^(?:open|go to|visit)\s+(\S+\.(?:com|org|net|io|dev|edu|gov)\S*)/i,
-    tool: 'open_url', args: (m) => ({ url: m[1] }) },
-
-  // Screen and selection
-  { re: /(what(?:'s| is| does)?\s+(?:this|that|it)\s+(?:say|mean)|read (?:the|my) screen|what(?:'s| is) on (?:my |the )?screen)/i,
-    tool: 'read_screen' },
-  { re: /(read (?:the|my) selection|what did i select|what(?:'s| is) selected)/i,
-    tool: 'read_selection' },
-
-  // Windows
-  { re: /(what(?:'s| is)? open|list (?:my )?windows|what apps are open)/i,
-    tool: 'list_windows' },
-
-  // Reminders
-  { re: /^remind me (?:to |that )?(.+?)(?:\s+(in .+|at .+|tomorrow.*|today.*))?[.?!]?$/i,
-    tool: 'create_reminder', args: (m) => ({ text: m[1].trim(), when: m[2] }) },
-  { re: /(what are my reminders|list (?:my )?reminders|what do i need to do)/i,
-    tool: 'list_reminders' },
-
-  // Notes
-  { re: /^(?:take a note|note|make a note)(?:\s*[:,-]?\s*)(.+)/i,
-    tool: 'take_note', args: (m) => ({ text: m[1].trim() }) },
-
-  // Files
-  { re: /^(?:find|search for|where is|locate)\s+(?:my\s+|the\s+)?(?:file\s+)?(.+?)(?:\s+file)?[.?!]?$/i,
-    tool: 'search_files',
-    args: (m) => ({ query: m[1].trim() }),
-    // Only treat it as a file search when it sounds like one.
-    guard: (m, text) => /\b(file|document|pdf|photo|picture|folder|download)\b/i.test(text)
-  },
-
-  // Web
-  { re: /^(?:search(?: the web)?(?: for)?|google|look up)\s+(.+?)[.?!]?$/i,
-    tool: 'search_web', args: (m) => ({ query: m[1].trim() }) },
-  { re: /^(?:what|who|when|where|why|how)\b.+\?$/i,
-    tool: 'answer_from_web', args: (_m, text) => ({ query: text.replace(/[?]+$/, '').trim() }) }
-];
-
-/** Returns the tool and arguments for a recognised command, or null. */
-function matchIntent(text, tools) {
-  const clean = String(text || '').trim();
-  if (!clean) return null;
-  const byName = new Map(tools.map((t) => [t.name, t]));
-
-  for (const intent of INTENTS) {
-    const m = intent.re.exec(clean);
-    if (!m) continue;
-    if (intent.guard && !intent.guard(m, clean)) continue;
-    const tool = byName.get(intent.tool);
-    if (!tool) continue; // the owning app is turned off
-    return { tool, args: intent.args ? intent.args(m, clean) : {} };
-  }
-  return null;
 }
 
 module.exports = { Agent, matchIntent, INTENTS, SYSTEM_PROMPT };

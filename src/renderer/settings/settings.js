@@ -93,18 +93,16 @@ function renderDashboard() {
 
   // Show the chord that actually bound, which is not always the preferred one.
   const hk = status.hotkeys || {};
+  const hold = status.holdToTalk && status.holdToTalk.available;
   const rows = [
-    ['Dictation', hk.dictation, cfg.hotkeys.dictationToggle],
-    ['Agent', hk.agent, cfg.hotkeys.agentToggle],
-    ['Edit selection', hk.edit, cfg.hotkeys.editToggle]
+    ['Dictation', hk.dictation, hold ? 'Hold to speak, release to finish' : 'Press once to start, again to finish'],
+    ['Agent', hk.agent, hold ? 'Hold to ask, release to finish' : 'Press once to start, again to finish']
   ];
-  document.getElementById('shortcutRows').innerHTML = rows.map(([name, actual, preferred]) => `
+  document.getElementById('shortcutRows').innerHTML = rows.map(([name, actual, note]) => `
     <div class="shortcut">
       <div>
         <div class="shortcut-name">${escapeHtml(name)}</div>
-        ${actual && preferred && actual !== preferred
-          ? `<div class="shortcut-note">${escapeHtml(prettyKey(preferred))} was taken by another app</div>`
-          : ''}
+        <div class="shortcut-note">${escapeHtml(note)}</div>
       </div>
       <div class="chord">${actual ? chordHtml(actual) : '<kbd>unbound</kbd>'}</div>
     </div>`).join('');
