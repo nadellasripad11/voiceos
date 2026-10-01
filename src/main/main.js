@@ -1,0 +1,676 @@
+'use strict';
+/**
+ * VoiceOS main process.
+ *
+ * Owns the service singletons (native bridge, speech engine, LLM provider,
+ * transcript store), the global hotkeys, the tray, and every window.
+ *
+ * The one hard rule here: the notch window must never take keyboard focus. The
+ * whole product depends on the user's own text field staying focused while they
+ * speak, so the notch is created with `focusable: false` and nothing is ever
+ * allowed to call focus() on it.
+ */
+const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, screen, shell, nativeImage, dialog } = require('electron');
+const path = require('path');
+const fs = require('fs');
+
+const { config } = require('../core/config');
+const { paths, ensureDirs } = require('../core/paths');
+const { getBridge } = require('../core/native/bridge');
+const { WhisperEngine } = require('../core/stt/whisper');
+const { createProvider } = require('../core/llm/provider');
+const { TranscriptStore } = require('../core/memory/transcripts');
+const { DictationMode } = require('../core/modes/dictation');
+const { createLogger } = require('./logger');
+
+const isDev = process.argv.includes('--dev');
+const logger = createLogger({ dir: paths.logs, level: isDev ? 'debug' : 'info' });
+
+/** Single place holding everything long-lived. */
+const services = {
+  bridge: null,
+  stt: null,
+  provider: null,
+  transcripts: null,
+  dictation: null
+};
+
+const windows = {
+  notch: null,
+  settings: null
+};
+
+let tray = null;
+
+/**
+ * Session state machine.
+ *
+ * Explicit phases rather than a single boolean, because the failure that matters
+ * is getting stuck: if the renderer never submits audio (no microphone,
+ * permission denied, a crashed capture) a boolean 'active' flag would stay set
+ * forever and every later hotkey press would be read as another stop. The
+ * watchdog guarantees a return to idle no matter what the renderer does.
+ */
+const PHASE = { IDLE: 'idle', LISTENING: 'listening', PROCESSING: 'processing' };
+const WATCHDOG_MS = 90000;
+
+let session = { phase: PHASE.IDLE, mode: null, startedAt: 0, abort: null, watchdog: null };
+
+function resetSession(reason) {
+  if (session.watchdog) clearTimeout(session.watchdog);
+  if (reason && session.phase !== PHASE.IDLE) {
+    logger.debug(`session reset (${reason}) from phase ${session.phase}`);
+  }
+  session = { phase: PHASE.IDLE, mode: null, startedAt: 0, abort: null, watchdog: null };
+}
+
+function armWatchdog() {
+  if (session.watchdog) clearTimeout(session.watchdog);
+  session.watchdog = setTimeout(() => {
+    logger.warn(`session watchdog fired after ${WATCHDOG_MS}ms in phase ${session.phase}; returning to idle`);
+    broadcast('session-error', {
+      message: 'Timed out',
+      detail: 'No audio arrived. Check that a microphone is connected and permitted.'
+    });
+    resetSession('watchdog');
+    setTimeout(hideNotch, 2500);
+  }, WATCHDOG_MS);
+}
+
+// --- Service wiring -------------------------------------------------------
+
+function buildStt() {
+  const cfg = config.all();
+  return new WhisperEngine({
+    model: cfg.stt.model,
+    language: cfg.stt.language,
+    threads: cfg.stt.threads,
+    translate: cfg.stt.translate,
+    beamSize: cfg.stt.beamSize,
+    bestOf: cfg.stt.bestOf,
+    noFallback: cfg.stt.noFallback,
+    audioCtx: cfg.stt.audioCtx,
+    logger
+  });
+}
+
+function buildProvider() {
+  const cfg = config.all();
+  const credentials = readCredentials();
+  return createProvider(cfg.llm.provider, {
+    baseUrl: cfg.llm.baseUrl,
+    keepAlive: cfg.llm.keepAlive,
+    numCtx: cfg.llm.numCtx,
+    apiKey: credentials[cfg.llm.provider] || '',
+    logger
+  });
+}
+
+/**
+ * API keys live outside config.json so that exporting or sharing settings never
+ * leaks a key. Only ever read and written locally.
+ */
+function readCredentials() {
+  try { return JSON.parse(fs.readFileSync(paths.credentials, 'utf8')); }
+  catch { return {}; }
+}
+
+function writeCredentials(next) {
+  fs.writeFileSync(paths.credentials, JSON.stringify(next, null, 2), 'utf8');
+  try { fs.chmodSync(paths.credentials, 0o600); } catch { /* best effort on Windows */ }
+}
+
+async function initServices() {
+  ensureDirs();
+  services.bridge = getBridge({ logger });
+  services.stt = buildStt();
+  services.provider = buildProvider();
+  services.transcripts = new TranscriptStore({ config, logger });
+  services.dictation = new DictationMode({
+    stt: services.stt,
+    provider: services.provider,
+    config,
+    bridge: services.bridge,
+    transcripts: services.transcripts,
+    logger
+  });
+
+  // Start the native bridge eagerly: its first call otherwise pays ~7s of
+  // PowerShell and assembly loading, which would land on the user's first
+  // dictation instead of on app launch.
+  services.bridge.start()
+    .then(() => logger.info('native bridge ready'))
+    .catch((err) => logger.error(`native bridge failed to start: ${err.message}`));
+
+  services.transcripts.prune()
+    .then((r) => r.removed && logger.info(`pruned ${r.removed} expired transcript file(s)`))
+    .catch(() => {});
+
+  const sttStatus = services.stt.status();
+  if (!sttStatus.ready) {
+    logger.warn(`speech engine not ready: ${sttStatus.problems.join('; ')}`);
+  } else {
+    logger.info(`speech engine ready: ${path.basename(sttStatus.model)} on ${sttStatus.threads} threads`);
+  }
+}
+
+/** Rebuilds the services whose construction depends on settings. */
+function reloadServices() {
+  services.stt = buildStt();
+  services.provider = buildProvider();
+  services.dictation = new DictationMode({
+    stt: services.stt,
+    provider: services.provider,
+    config,
+    bridge: services.bridge,
+    transcripts: services.transcripts,
+    logger
+  });
+  registerHotkeys();
+  broadcast('settings-changed', config.all());
+}
+
+// --- Windows --------------------------------------------------------------
+
+const NOTCH_WIDTH = 420;
+const NOTCH_HEIGHT = 132;
+
+function createNotch() {
+  if (windows.notch && !windows.notch.isDestroyed()) return windows.notch;
+
+  const win = new BrowserWindow({
+    width: NOTCH_WIDTH,
+    height: NOTCH_HEIGHT,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    // The entire product depends on the user's own field keeping focus while
+    // they dictate. A focusable overlay would break insertion.
+    focusable: false,
+    alwaysOnTop: true,
+    acceptFirstMouse: true,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'notch.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // Lets getUserMedia run without a user gesture inside our own overlay.
+      autoplayPolicy: 'no-user-gesture-required'
+    }
+  });
+
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.setIgnoreMouseEvents(false);
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'notch', 'index.html'));
+
+  win.on('closed', () => { windows.notch = null; });
+  windows.notch = win;
+  positionNotch();
+  return win;
+}
+
+function positionNotch() {
+  const win = windows.notch;
+  if (!win || win.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const { x, y, width, height } = display.workArea;
+  const position = config.get('ui.notchPosition', 'bottom');
+  const left = Math.round(x + (width - NOTCH_WIDTH) / 2);
+  const top = position === 'top' ? y + 24 : y + height - NOTCH_HEIGHT - 48;
+  win.setBounds({ x: left, y: top, width: NOTCH_WIDTH, height: NOTCH_HEIGHT });
+}
+
+function showNotch() {
+  const win = createNotch();
+  positionNotch();
+  // showInactive, never show(): show() would focus the overlay and the text
+  // would land in the wrong place.
+  win.showInactive();
+}
+
+function hideNotch() {
+  if (windows.notch && !windows.notch.isDestroyed()) windows.notch.hide();
+}
+
+function createSettings() {
+  if (windows.settings && !windows.settings.isDestroyed()) {
+    windows.settings.show();
+    windows.settings.focus();
+    return windows.settings;
+  }
+  const win = new BrowserWindow({
+    width: 980,
+    height: 720,
+    minWidth: 760,
+    minHeight: 560,
+    title: 'VoiceOS Settings',
+    backgroundColor: '#0b0b0f',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'settings.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'settings', 'index.html'));
+  win.on('closed', () => { windows.settings = null; });
+  windows.settings = win;
+  return win;
+}
+
+function broadcast(channel, payload) {
+  for (const win of Object.values(windows)) {
+    if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  }
+}
+
+// --- Hotkeys --------------------------------------------------------------
+
+/**
+ * Electron's globalShortcut has no key-up event, so true hold-to-talk needs the
+ * optional native hook. Toggle shortcuts are always registered as the dependency
+ * free path, and `fn` is not interceptable on Windows at all (the keyboard
+ * firmware consumes it before the OS sees it), which is why the default differs
+ * from the Mac product.
+ */
+/**
+ * Fallbacks tried when the preferred accelerator is already owned by another
+ * application. Windows gives no way to discover who holds a chord, and
+ * globalShortcut.register simply returns false, so a silently dead hotkey is
+ * the failure mode to avoid: the feature would look broken with no explanation.
+ */
+const HOTKEY_FALLBACKS = {
+  dictation: ['Control+Shift+Space', 'Control+Shift+D', 'Alt+Shift+Space', 'F8'],
+  agent: ['Control+Alt+Space', 'Control+Alt+A', 'Control+Shift+A', 'Alt+Shift+A', 'F9'],
+  edit: ['Control+Shift+E', 'Control+Alt+E', 'F10']
+};
+
+/** Which accelerator each mode actually ended up on, for the UI to display. */
+let activeHotkeys = {};
+
+function registerHotkeys() {
+  globalShortcut.unregisterAll();
+  activeHotkeys = {};
+  const keys = config.get('hotkeys');
+
+  const bind = (preferred, handler, label) => {
+    // Try the user's choice first, then the known-good alternatives.
+    const candidates = [preferred, ...(HOTKEY_FALLBACKS[label] || [])]
+      .filter(Boolean)
+      .filter((v, i, a) => a.indexOf(v) === i);
+
+    for (const accelerator of candidates) {
+      try {
+        if (globalShortcut.register(accelerator, handler)) {
+          activeHotkeys[label] = accelerator;
+          if (accelerator !== preferred) {
+            logger.warn(`${label} hotkey '${preferred}' is taken by another app; using '${accelerator}' instead`);
+          } else {
+            logger.info(`hotkey ${label}: ${accelerator}`);
+          }
+          return;
+        }
+      } catch (err) {
+        logger.debug(`invalid ${label} hotkey '${accelerator}': ${err.message}`);
+      }
+    }
+    activeHotkeys[label] = null;
+    logger.error(`could not bind any hotkey for ${label}; tried ${candidates.join(', ')}`);
+  };
+
+  bind(keys.dictationToggle, () => toggleSession('dictation'), 'dictation');
+  bind(keys.agentToggle, () => toggleSession('agent'), 'agent');
+  bind(keys.editToggle, () => toggleSession('edit'), 'edit');
+}
+
+function toggleSession(mode) {
+  // While listening, the same key stops and submits. While processing, further
+  // presses are ignored so a held or repeated hotkey cannot pile up.
+  if (session.phase === PHASE.LISTENING) return stopSession();
+  if (session.phase === PHASE.PROCESSING) return;
+  return startSession(mode);
+}
+
+function startSession(mode) {
+  if (session.phase !== PHASE.IDLE) return;
+  const status = services.stt.status();
+  if (!status.ready) {
+    showNotch();
+    broadcast('session-error', {
+      message: 'Speech engine not installed',
+      detail: status.problems.join(' ')
+    });
+    setTimeout(hideNotch, 4000);
+    return;
+  }
+  session = {
+    phase: PHASE.LISTENING,
+    mode,
+    startedAt: Date.now(),
+    abort: new AbortController(),
+    watchdog: null
+  };
+  armWatchdog();
+  showNotch();
+  broadcast('session-start', { mode, config: config.all() });
+  logger.info(`session start: ${mode}`);
+}
+
+function stopSession() {
+  if (session.phase !== PHASE.LISTENING) return;
+  session.phase = PHASE.PROCESSING;
+  armWatchdog();
+  logger.info(`session stop after ${Date.now() - session.startedAt}ms listening`);
+  broadcast('session-stop', { mode: session.mode });
+}
+
+function cancelSession() {
+  if (session.phase === PHASE.IDLE) return;
+  if (session.abort) session.abort.abort();
+  resetSession('cancelled');
+  broadcast('session-cancel', {});
+  hideNotch();
+  logger.info('session cancelled');
+}
+
+// --- IPC ------------------------------------------------------------------
+
+function registerIpc() {
+  ipcMain.handle('voiceos:get-config', () => config.all());
+
+  ipcMain.handle('voiceos:set-config', (_e, patch) => {
+    config.patch(patch);
+    reloadServices();
+    return config.all();
+  });
+
+  ipcMain.handle('voiceos:set-config-value', (_e, { key, value }) => {
+    config.set(key, value);
+    reloadServices();
+    return config.all();
+  });
+
+  ipcMain.handle('voiceos:reset-config', () => {
+    config.reset();
+    reloadServices();
+    return config.all();
+  });
+
+  /**
+   * The renderer hands over captured audio here. Transferred as an ArrayBuffer
+   * of 16-bit PCM, which is what Whisper wants and keeps the IPC payload small.
+   */
+  ipcMain.handle('voiceos:submit-audio', async (_e, { pcm, sampleRate, mode }) => {
+    if (session.phase === PHASE.IDLE) {
+      logger.warn('audio submitted with no active session; ignoring');
+      return { ok: false, reason: 'no active session' };
+    }
+    // Capture ended, so we are definitely processing now even if the renderer
+    // stopped on its own (silence detected, max length) rather than via a hotkey.
+    session.phase = PHASE.PROCESSING;
+    armWatchdog();
+    const samples = pcm16ToFloat32(Buffer.from(pcm));
+    const activeMode = mode || session.mode || 'dictation';
+    const signal = session.abort ? session.abort.signal : undefined;
+
+    try {
+      if (activeMode === 'dictation') {
+        const result = await services.dictation.run(samples, {
+          sampleRate,
+          signal,
+          onStage: (stage, detail) => broadcast('session-stage', { stage, detail })
+        });
+        broadcast('session-result', result);
+        return result;
+      }
+      // Edit and Agent modes arrive in the next layers; dictation is the path
+      // that is complete and tested today.
+      broadcast('session-error', {
+        message: `${activeMode} mode is not wired up yet`,
+        detail: 'Dictation Mode is available now.'
+      });
+      return { ok: false, reason: `${activeMode} not implemented` };
+    } catch (err) {
+      logger.error(`session failed: ${err.stack || err.message}`);
+      broadcast('session-error', { message: 'Something went wrong', detail: err.message });
+      return { ok: false, reason: err.message };
+    } finally {
+      resetSession('finished');
+      setTimeout(hideNotch, 1400);
+    }
+  });
+
+  ipcMain.handle('voiceos:cancel', () => { cancelSession(); return { ok: true }; });
+
+  ipcMain.on('voiceos:level', (_e, level) => {
+    // Forwarded so the settings window can show a live input meter.
+    if (windows.settings && !windows.settings.isDestroyed()) {
+      windows.settings.webContents.send('voiceos:level', level);
+    }
+  });
+
+  ipcMain.handle('voiceos:status', async () => {
+    const sttStatus = services.stt.status();
+    let llmAvailable = false;
+    let llmModels = [];
+    try {
+      llmAvailable = await services.provider.available();
+      if (llmAvailable) llmModels = await services.provider.listModels();
+    } catch (err) {
+      logger.debug(`llm status check failed: ${err.message}`);
+    }
+    return {
+      version: app.getVersion(),
+      platform: process.platform,
+      stt: sttStatus,
+      llm: {
+        provider: services.provider.name,
+        available: llmAvailable,
+        models: llmModels,
+        configured: config.get('llm.model')
+      },
+      bridge: { available: services.bridge.available, running: Boolean(services.bridge.proc) },
+      hotkeys: activeHotkeys,
+      paths: { userData: paths.userData, models: paths.models, logs: paths.logs }
+    };
+  });
+
+  ipcMain.handle('voiceos:transcripts', async (_e, { action, query, limit, format } = {}) => {
+    switch (action) {
+      case 'list': return services.transcripts.list({ limit });
+      case 'search': return services.transcripts.search(query, { limit });
+      case 'stats': return services.transcripts.stats();
+      case 'export': return services.transcripts.export(format);
+      case 'clear': {
+        const { response } = await dialog.showMessageBox({
+          type: 'warning',
+          buttons: ['Cancel', 'Delete everything'],
+          defaultId: 0,
+          cancelId: 0,
+          title: 'Delete all transcripts?',
+          message: 'Delete every saved transcript and audio file?',
+          detail: 'This cannot be undone.'
+        });
+        if (response !== 1) return { cancelled: true };
+        return services.transcripts.clearAll();
+      }
+      default: throw new Error(`Unknown transcript action '${action}'`);
+    }
+  });
+
+  ipcMain.handle('voiceos:credentials', (_e, { action, provider, key } = {}) => {
+    const creds = readCredentials();
+    if (action === 'set') {
+      creds[provider] = key;
+      writeCredentials(creds);
+      reloadServices();
+      return { ok: true };
+    }
+    if (action === 'clear') {
+      delete creds[provider];
+      writeCredentials(creds);
+      reloadServices();
+      return { ok: true };
+    }
+    // Never return the key itself to the renderer; only whether one is present.
+    return Object.fromEntries(Object.keys(creds).map((p) => [p, Boolean(creds[p])]));
+  });
+
+  ipcMain.handle('voiceos:open-path', (_e, which) => {
+    const target = { userData: paths.userData, models: paths.models, logs: paths.logs }[which];
+    if (!target) throw new Error(`Unknown path '${which}'`);
+    return shell.openPath(target);
+  });
+
+  ipcMain.handle('voiceos:open-settings', () => { createSettings(); return { ok: true }; });
+
+  ipcMain.handle('voiceos:apps', () => {
+    const catalog = require('../core/apps/catalog');
+    const enabled = config.get('apps', {});
+    const platformLabel = (platforms) => platforms
+      .map((p) => ({ darwin: 'macOS', win32: 'Windows' }[p] || p))
+      .join(' · ');
+
+    // Every entry is returned, including the Apple-only ones, so the store reads
+    // the same as the real product. `available` tells the UI which can run here.
+    const shape = (app) => ({
+      id: app.id,
+      name: app.name,
+      icon: app.icon,
+      glyph: app.glyph || null,
+      category: app.category,
+      description: app.description,
+      auth: app.auth,
+      authNote: app.authNote,
+      beta: Boolean(app.beta),
+      extra: Boolean(app.extra),
+      replaces: app.replaces || null,
+      windowsEquivalent: app.windowsEquivalent || null,
+      platforms: app.platforms,
+      platformLabel: platformLabel(app.platforms),
+      available: app.platforms.includes(process.platform),
+      actionCount: app.actions.length,
+      mutatingCount: app.actions.filter((a) => a.mutating).length,
+      enabled: Boolean(enabled[app.id] && enabled[app.id].enabled)
+    });
+
+    return {
+      official: catalog.official().map(shape),
+      extras: catalog.WINDOWS_EXTRAS.filter((a) => a.platforms.includes(process.platform)).map(shape),
+      categories: catalog.CATEGORIES,
+      summary: catalog.summary(process.platform)
+    };
+  });
+
+  ipcMain.handle('voiceos:set-app-enabled', (_e, { id, enabled }) => {
+    const apps = { ...config.get('apps', {}) };
+    apps[id] = { ...(apps[id] || {}), enabled, connectedAt: enabled ? new Date().toISOString() : null };
+    config.set('apps', apps);
+    return { ok: true };
+  });
+}
+
+/** Mirror of floatToPcm16 in core/audio/wav.js. */
+function pcm16ToFloat32(buf) {
+  const out = new Float32Array(buf.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    const v = buf.readInt16LE(i * 2);
+    out[i] = v < 0 ? v / 0x8000 : v / 0x7fff;
+  }
+  return out;
+}
+
+// --- Tray -----------------------------------------------------------------
+
+function buildTrayIcon() {
+  const iconPath = path.join(__dirname, '..', 'renderer', 'shared', 'tray.png');
+  if (fs.existsSync(iconPath)) return nativeImage.createFromPath(iconPath);
+  // A tray icon is required on Windows or the item is invisible, so fall back
+  // to a generated dot rather than shipping nothing.
+  const size = 16;
+  const canvas = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - size / 2 + 0.5;
+      const dy = y - size / 2 + 0.5;
+      const inside = Math.sqrt(dx * dx + dy * dy) < size / 2 - 1.5;
+      const i = (y * size + x) * 4;
+      canvas[i] = inside ? 0x7c : 0;      // B
+      canvas[i + 1] = inside ? 0x5c : 0;  // G
+      canvas[i + 2] = inside ? 0xff : 0;  // R
+      canvas[i + 3] = inside ? 0xff : 0;  // A
+    }
+  }
+  return nativeImage.createFromBuffer(canvas, { width: size, height: size });
+}
+
+function buildTray() {
+  tray = new Tray(buildTrayIcon());
+  tray.setToolTip('VoiceOS');
+  const refresh = () => {
+    const keys = config.get('hotkeys');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: `Dictate  (${keys.dictationToggle})`, click: () => toggleSession('dictation') },
+      { label: `Agent  (${keys.agentToggle})`, click: () => toggleSession('agent') },
+      { label: `Edit selection  (${keys.editToggle})`, click: () => toggleSession('edit') },
+      { type: 'separator' },
+      { label: 'Settings…', click: () => createSettings() },
+      { label: 'Open data folder', click: () => shell.openPath(paths.userData) },
+      { label: 'Open logs', click: () => shell.openPath(paths.logs) },
+      { type: 'separator' },
+      { label: `VoiceOS ${app.getVersion()}`, enabled: false },
+      { label: 'Quit', click: () => app.quit() }
+    ]));
+  };
+  refresh();
+  config.onChange(refresh);
+  tray.on('click', () => createSettings());
+}
+
+// --- Lifecycle ------------------------------------------------------------
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => createSettings());
+
+  app.whenReady().then(async () => {
+    await initServices();
+    registerIpc();
+    registerHotkeys();
+    buildTray();
+    createNotch();
+
+    // Microphone access for our own windows only.
+    const session_ = require('electron').session;
+    session_.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(permission === 'media' || permission === 'audioCapture');
+    });
+
+    if (!config.get('onboarded')) {
+      createSettings();
+      config.set('onboarded', true);
+    }
+
+    logger.info(`VoiceOS ${app.getVersion()} ready`);
+  });
+
+  app.on('window-all-closed', () => {
+    // A tray app stays alive with no windows open; that is the point.
+  });
+
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+    if (services.bridge) services.bridge.stop();
+  });
+}
+
+module.exports = { services, windows };

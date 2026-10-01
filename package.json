@@ -1,0 +1,51 @@
+{
+  "name": "voiceos",
+  "productName": "VoiceOS",
+  "version": "0.1.0",
+  "description": "Local-first AI voice assistant for Windows and macOS. Dictation, Edit and Agent modes, powered entirely by open models running on your own machine.",
+  "main": "src/main/main.js",
+  "private": true,
+  "author": "Sripad",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "setup": "node scripts/setup.js",
+    "setup:models": "node scripts/fetch-models.js",
+    "doctor": "node scripts/doctor.js",
+    "site": "node website/serve.js",
+    "dist": "electron-builder"
+  },
+  "dependencies": {},
+  "optionalDependencies": {
+    "uiohook-napi": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.sripad.voiceos",
+    "productName": "VoiceOS",
+    "files": [
+      "src/**/*",
+      "vendor/**/*",
+      "!models/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "uiohook-napi@1.5.5": true
+  }
+}

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>VoiceOS Settings — preview</title>
+</head>
+<body>
+  <!--
+    Development preview of the settings window.
+
+    Loads the real index.html and the real settings.js, with window.voiceos
+    stubbed, so the UI can be inspected in a browser without launching Electron.
+    Nothing here ships: the app loads index.html directly.
+  -->
+  <script>
+    const CATEGORIES = ['Messaging', 'Email', 'Calendar', 'Productivity', 'Note Taking', 'Media', 'Social'];
+
+    const OFFICIAL = [
+      ['imessage', 'iMessage', 'imessage.webp', 'Messaging', 'Read and send iMessages', 5, ['darwin'], false, 'local'],
+      ['apple-mail', 'Apple Mail', 'apple-mail.webp', 'Email', 'Read, search, send, and reply to email', 7, ['darwin'], false, 'local'],
+      ['reminders', 'Reminders', 'reminders.webp', 'Productivity', 'Read, create, and complete reminders', 5, ['darwin'], false, 'local'],
+      ['finder', 'Finder', 'finder.png', 'Productivity', 'Search, read, and organize files on your Mac', 12, ['darwin'], false, 'local'],
+      ['apple-notes', 'Notes', 'apple-notes.webp', 'Note Taking', 'Read, create, and append notes', 6, ['darwin'], false, 'local'],
+      ['spotify', 'Spotify', 'spotify.webp', 'Media', 'Control playback, volume, and tracks in the desktop app', 9, ['darwin', 'win32'], true, 'none'],
+      ['slack', 'Slack', 'slack.webp', 'Messaging', 'Read and send messages', 9, ['darwin', 'win32'], false, 'token'],
+      ['gmail', 'Gmail', 'gmail.webp', 'Email', 'Send, read, and manage emails', 7, ['darwin', 'win32'], false, 'oauth'],
+      ['google-calendar', 'Google Calendar', 'google-calendar.png', 'Calendar', 'View and create calendar events', 7, ['darwin', 'win32'], false, 'oauth'],
+      ['apple-calendar', 'Apple Calendar', 'apple-calendar.svg', 'Calendar', 'View and create events on your Mac', 7, ['darwin'], false, 'local'],
+      ['google-maps', 'Google Maps', 'google-maps.png', 'Productivity', 'Search places, get directions, and things nearby', 1, ['darwin', 'win32'], false, 'none'],
+      ['outlook', 'Outlook', 'outlook.webp', 'Email', 'Email, calendar, and contacts in Microsoft 365', 11, ['darwin', 'win32'], false, 'oauth'],
+      ['google-drive', 'Google Drive', 'google-drive.webp', 'Productivity', 'Manage Files, Sheets, and Docs', 17, ['darwin', 'win32'], false, 'oauth'],
+      ['linear', 'Linear', 'linear.webp', 'Productivity', 'Create, manage, and track issues', 10, ['darwin', 'win32'], false, 'token'],
+      ['jira', 'Jira', 'jira.svg', 'Productivity', 'Create, update, search, and manage Jira issues and projects', 11, ['darwin', 'win32'], false, 'token'],
+      ['claude-code', 'Claude Code', 'claude-code.webp', 'Productivity', 'Run coding tasks with the Claude Code CLI on your computer', 8, ['darwin', 'win32'], true, 'local'],
+      ['codex', 'Codex', 'codex.webp', 'Productivity', 'Run coding tasks with the Codex app or CLI on your computer', 8, ['darwin', 'win32'], true, 'local'],
+      ['notion', 'Notion', 'notion.webp', 'Note Taking', 'Manage pages and databases', 9, ['darwin', 'win32'], false, 'token'],
+      ['obsidian', 'Obsidian', 'obsidian.webp', 'Note Taking', 'Read, create, and append vault notes', 4, ['darwin', 'win32'], true, 'local'],
+      ['canvas', 'Canvas', 'canvas.webp', 'Productivity', 'View courses and assignments', 13, ['darwin', 'win32'], false, 'token'],
+      ['x-twitter', 'X (Twitter)', 'x.webp', 'Social', 'Post, search, and engage on X', 9, ['darwin', 'win32'], true, 'browser']
+    ];
+
+    const EXTRAS = [
+      ['whatsapp', 'WhatsApp', null, 'Messaging', 'Read and send WhatsApp messages', 5, 'browser', '💬'],
+      ['files', 'File Explorer', null, 'Productivity', 'Search, read, and organize files on your PC', 12, 'local', '📁'],
+      ['notes', 'Notes', null, 'Note Taking', 'Read, create, and append local notes', 6, 'none', '📝'],
+      ['todo', 'Reminders', null, 'Productivity', 'Read, create, and complete reminders', 5, 'none', '✅'],
+      ['windows-calendar', 'Calendar', null, 'Calendar', 'Local calendar events on this PC', 6, 'none', '🗓️'],
+      ['web-search', 'Web Search', null, 'Productivity', 'Search the web with sources', 4, 'none', '🔍'],
+      ['system', 'This PC', null, 'Productivity', 'Launch apps, control windows, and read the screen', 11, 'none', '🖥️']
+    ];
+
+    const label = (ps) => ps.map((p) => ({ darwin: 'macOS', win32: 'Windows' }[p])).join(' · ');
+
+    const config = {
+      onboarded: true,
+      hotkeys: { dictationToggle: 'Control+Alt+Space', agentToggle: 'Control+Alt+A', editToggle: 'Control+Alt+E' },
+      stt: { model: 'ggml-tiny.en-q5_1.bin', language: 'auto', beamSize: 1 },
+      llm: { provider: 'ollama', model: 'qwen2.5:3b-instruct', agentModel: 'qwen2.5:7b-instruct' },
+      dictation: {
+        polish: true, polishStyle: 'auto', removeFillers: true, autoPunctuate: true,
+        autoCapitalize: true, trailingSpace: true, insertMode: 'paste',
+        vocabulary: ['Sripad', 'VoiceOS', 'Hackatime'],
+        replacements: [{ from: 'my email', to: 'you@example.com' }]
+      },
+      agent: {
+        enabled: true, screenContext: true, cursorContext: true, ocr: true,
+        webSearch: true, confirmBeforeActions: true, autoConfirmReadOnly: true
+      },
+      privacy: {
+        saveTranscriptsOnDevice: true, saveAudio: false, privateMode: false,
+        transcriptRetentionDays: 30
+      },
+      ui: { notchPosition: 'bottom', showWaveform: true, launchAtLogin: false }
+    };
+
+    window.voiceos = {
+      getConfig: async () => config,
+      setConfig: async () => config,
+      setValue: async () => config,
+      resetConfig: async () => config,
+      status: async () => ({
+        version: '0.1.0',
+        platform: 'win32',
+        stt: { ready: true, model: 'C:/models/ggml-tiny.en-q5_1.bin', threads: 7, problems: [] },
+        llm: { provider: 'ollama', available: false, models: [], configured: 'qwen2.5:3b-instruct' },
+        bridge: { available: true, running: true },
+        paths: { userData: 'C:/Users/you/AppData/Roaming/VoiceOS', models: 'models', logs: 'logs' }
+      }),
+      apps: async () => ({
+        official: OFFICIAL.map(([id, name, icon, category, description, actionCount, platforms, beta, auth]) => ({
+          id, name, icon, glyph: null, category, description, auth,
+          beta, extra: false, replaces: null,
+          windowsEquivalent: { imessage: 'whatsapp', finder: 'files', 'apple-notes': 'notes',
+                               reminders: 'todo', 'apple-calendar': 'windows-calendar', 'apple-mail': 'outlook' }[id] || null,
+          platforms, platformLabel: label(platforms),
+          available: platforms.includes('win32'),
+          actionCount, mutatingCount: 0,
+          enabled: ['spotify', 'web-search'].includes(id)
+        })),
+        extras: EXTRAS.map(([id, name, icon, category, description, actionCount, auth, glyph]) => ({
+          id, name, icon, glyph, category, description, auth,
+          beta: false, extra: true, replaces: null, windowsEquivalent: null,
+          platforms: ['win32'], platformLabel: 'Windows',
+          available: true, actionCount, mutatingCount: 0,
+          enabled: ['system', 'web-search'].includes(id)
+        })),
+        categories: CATEGORIES,
+        summary: { listed: 28, official: 21, runnable: 22 }
+      }),
+      setAppEnabled: async () => ({ ok: true }),
+      transcripts: async ({ action }) => {
+        if (action === 'stats') return { sessions: 42, words: 3184, avgMs: 1638, estimatedMinutesSaved: 67 };
+        if (action === 'list') return [
+          { at: new Date().toISOString(), text: 'Send an email to David about the project update.', target: { process: 'chrome' }, ms: 1638, polished: true },
+          { at: new Date(Date.now() - 6e5).toISOString(), text: 'Remind me to send Maya the deck tomorrow morning.', target: { process: 'slack' }, ms: 1521, polished: true },
+          { at: new Date(Date.now() - 36e5).toISOString(), text: 'Search for last year tax returns in my documents folder.', target: { process: 'explorer' }, ms: 1744, polished: false }
+        ];
+        return [];
+      },
+      credentials: async () => ({}),
+      openPath: async () => {},
+      onLevel: () => () => {},
+      onSettingsChanged: () => () => {}
+    };
+  </script>
+
+  <script>
+    // Pull in the real markup and the real script, so the preview cannot drift
+    // from what the app actually renders.
+    (async () => {
+      const html = await (await fetch('index.html')).text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+
+      for (const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
+        document.head.appendChild(link.cloneNode(true));
+      }
+      document.title = doc.title + ' — preview';
+      document.body.innerHTML = doc.body.innerHTML;
+
+      const script = document.createElement('script');
+      script.src = 'settings.js';
+      document.body.appendChild(script);
+    })();
+  </script>
+</body>
+</html>

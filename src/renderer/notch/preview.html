@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>VoiceOS notch — preview</title>
+  <style>
+    /* A photographic backdrop so the glass surface can actually be judged;
+       the real overlay floats over whatever the user is working in. */
+    html, body { margin: 0; height: 100%; }
+    body {
+      display: grid;
+      place-items: end center;
+      background:
+        radial-gradient(1200px 600px at 20% 10%, #cfe3ff 0%, transparent 60%),
+        radial-gradient(900px 500px at 80% 30%, #ffd9e3 0%, transparent 55%),
+        linear-gradient(160deg, #eaf2ff 0%, #f7f8fb 50%, #e9edf5 100%);
+      font-family: -apple-system, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    }
+    .backdrop-text {
+      position: fixed; inset: 0; padding: 60px 80px;
+      color: #9aa4b2; font-size: 15px; line-height: 2; max-width: 820px;
+      user-select: none; pointer-events: none;
+    }
+    .frame { width: 420px; height: 132px; margin-bottom: 48px; }
+    .controls {
+      position: fixed; top: 20px; right: 24px; display: flex; gap: 6px; flex-wrap: wrap;
+      max-width: 320px; justify-content: flex-end;
+    }
+    .controls button {
+      font: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer;
+      background: #fff; color: #374151;
+      border: 1px solid #e5e7eb; border-radius: 9999px;
+      box-shadow: 0 1px 2px rgba(15,23,42,.06);
+    }
+    .controls button:hover { background: #f9fafb; }
+  </style>
+</head>
+<body>
+  <div class="backdrop-text">
+    Pretend this is an email you are writing. The overlay sits above whatever you
+    are working in, never takes focus, and dissolves when it is done. Use the
+    buttons to step through each state.
+  </div>
+
+  <div class="controls">
+    <button data-state="listening">listening</button>
+    <button data-state="transcribing">transcribing</button>
+    <button data-state="polishing">polishing</button>
+    <button data-state="inserting">inserting</button>
+    <button data-state="done">done</button>
+    <button data-state="error">error</button>
+  </div>
+
+  <iframe class="frame" id="frame" src="index.html" frameborder="0" scrolling="no"></iframe>
+
+  <script>
+    // The overlay normally receives its state over IPC. Here we reach into the
+    // frame and drive the same DOM the real renderer drives.
+    const frame = document.getElementById('frame');
+    const LABELS = {
+      listening: 'Listening…',
+      transcribing: 'Transcribing…',
+      polishing: 'Polishing…',
+      inserting: 'Inserting…',
+      done: 'Inserted in 1638ms',
+      error: 'No microphone'
+    };
+    const TEXT = 'Send an email to David about the project update.';
+
+    let waveTimer = null;
+
+    function apply(state) {
+      const doc = frame.contentDocument;
+      const stage = doc.getElementById('stage');
+      stage.dataset.state = state;
+      doc.getElementById('mode').textContent = 'Dictation';
+      doc.getElementById('hint').textContent = LABELS[state];
+      doc.getElementById('transcript').textContent =
+        state === 'done' ? TEXT : state === 'polishing' ? TEXT.toLowerCase() : '';
+      doc.getElementById('timer').textContent = state === 'listening' ? '2.4s' : '3.1s';
+
+      const toast = doc.getElementById('toast');
+      if (state === 'error') {
+        doc.getElementById('toastTitle').textContent = 'Microphone unavailable';
+        doc.getElementById('toastDetail').textContent =
+          'Allow access in Windows Settings → Privacy → Microphone.';
+        toast.hidden = false;
+      } else {
+        toast.hidden = true;
+      }
+
+      // Animate the bars so the waveform can be judged in motion.
+      clearInterval(waveTimer);
+      const canvas = doc.getElementById('wave');
+      const ctx = canvas.getContext('2d');
+      const BARS = 56;
+      const levels = new Array(BARS).fill(0);
+      const active = state === 'listening';
+
+      waveTimer = setInterval(() => {
+        levels.push(active ? Math.random() * 0.85 + 0.1 : 0.05);
+        levels.shift();
+        const { width, height } = canvas;
+        ctx.clearRect(0, 0, width, height);
+        const bw = width / BARS;
+        const mid = height / 2;
+        for (let i = 0; i < BARS; i++) {
+          const h = Math.max(2, levels[i] * height * 0.95);
+          const a = 0.3 + levels[i] * 0.7;
+          ctx.fillStyle = active
+            ? `rgba(251, 66, 104, ${a.toFixed(3)})`
+            : `rgba(107, 114, 128, ${(a * 0.8).toFixed(3)})`;
+          const x = i * bw + bw * 0.22;
+          const w = bw * 0.56;
+          const r = Math.min(w / 2, h / 2, bw * 0.28);
+          ctx.beginPath();
+          ctx.moveTo(x + r, mid - h / 2);
+          ctx.arcTo(x + w, mid - h / 2, x + w, mid + h / 2, r);
+          ctx.arcTo(x + w, mid + h / 2, x, mid + h / 2, r);
+          ctx.arcTo(x, mid + h / 2, x, mid - h / 2, r);
+          ctx.arcTo(x, mid - h / 2, x + w, mid - h / 2, r);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }, 70);
+    }
+
+    frame.addEventListener('load', () => {
+      // The real renderer expects an IPC bridge; stub it so it does not throw.
+      frame.contentWindow.voiceos = new Proxy({}, { get: () => () => () => {} });
+      apply('listening');
+    });
+
+    for (const b of document.querySelectorAll('.controls button')) {
+      b.addEventListener('click', () => apply(b.dataset.state));
+    }
+  </script>
+</body>
+</html>
