@@ -251,12 +251,15 @@ function positionNotch() {
   if (!win || win.isDestroyed()) return;
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
-  const { x, y, width, height } = display.workArea;
   const position = config.get('ui.notchPosition', 'top');
+
+  // bounds, not workArea: the island has to be flush with the physical edge of
+  // the display. workArea is inset by the taskbar and would leave a gap that
+  // makes the overlay read as a floating window instead of part of the screen.
+  const { x, y, width, height } = display.bounds;
   const left = Math.round(x + (width - NOTCH_WIDTH) / 2);
-  // The window is tall so the card can grow downward into an answer panel;
-  // at the top it hugs the edge, at the bottom it is anchored to the bottom.
-  const top = position === 'top' ? y + 8 : y + height - NOTCH_HEIGHT - 8;
+  const top = position === 'top' ? y : y + height - NOTCH_HEIGHT;
+
   win.setBounds({ x: left, y: top, width: NOTCH_WIDTH, height: NOTCH_HEIGHT });
 }
 
@@ -284,7 +287,7 @@ function idleNotch() {
   }
   positionNotch();
   windows.notch.showInactive();
-  broadcast('session-idle', { hotkeys: activeHotkeys });
+  broadcast('session-idle', { hotkeys: activeHotkeys, position: config.get('ui.notchPosition', 'top') });
 }
 
 function hideNotch() { idleNotch(); }
@@ -490,7 +493,7 @@ function startSession(mode) {
   };
   armWatchdog();
   showNotch();
-  broadcast('session-start', { mode, config: config.all() });
+  broadcast('session-start', { mode, config: config.all(), position: config.get('ui.notchPosition', 'top') });
   logger.info(`session start: ${mode}`);
 }
 

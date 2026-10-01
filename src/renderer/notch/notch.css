@@ -1,12 +1,26 @@
 /**
  * The notch.
  *
- * One liquid-glass card pinned to the top of the screen that grows from a quiet
- * pill into a full answer panel. Restraint is the point: a single accent, one
- * typeface, generous spacing, hairline rules, and nothing on screen that the
- * current state does not need.
+ * Modelled on the Dynamic Island: a near-black surface fused to the top edge of
+ * the display, square where it meets the bezel and rounded only along the
+ * bottom, so it reads as part of the screen rather than a window floating over
+ * it. It grows from a small pill into a full answer panel.
+ *
+ * It is deliberately dark rather than glass. The rest of the app is light, but
+ * this sits over arbitrary content at the screen edge, and a solid dark slab is
+ * the only treatment that stays legible against anything behind it.
  */
 @import url("../shared/tokens.css");
+
+:root {
+  --island: #08080a;
+  --island-raised: rgba(255, 255, 255, 0.07);
+  --island-edge: rgba(255, 255, 255, 0.09);
+  --island-text: #f5f5f7;
+  --island-dim: rgba(245, 245, 247, 0.62);
+  --island-faint: rgba(245, 245, 247, 0.38);
+  --island-radius: 26px;
+}
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -16,7 +30,7 @@ html, body {
   background: transparent;
   overflow: hidden;
   font-family: var(--font);
-  color: var(--ink);
+  color: var(--island-text);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   -webkit-user-select: none;
@@ -24,102 +38,117 @@ html, body {
   cursor: default;
 }
 
+/* No padding at the top: the card has to touch y=0 or the illusion breaks. */
 .stage {
   display: flex;
   justify-content: center;
   align-items: flex-start;
   width: 100%;
   height: 100%;
-  padding: 10px 16px 24px;
+  padding: 0 0 28px;
 }
 
-/* --- the card --- */
+/* --- the island --- */
 .card {
   width: 100%;
-  max-width: 560px;
+  max-width: 580px;
   overflow: hidden;
 
-  background-image: var(--glass-solid);
-  border: var(--glass-edge);
-  border-radius: var(--r-lg);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--island);
+  /* Square against the bezel, rounded where it leaves the screen edge. */
+  border-radius: 0 0 var(--island-radius) var(--island-radius);
+  box-shadow:
+    0 14px 38px rgba(0, 0, 0, 0.46),
+    0 2px 10px rgba(0, 0, 0, 0.3);
 
-  transition: max-width 260ms cubic-bezier(0.22, 1, 0.36, 1);
-  animation: drop 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    max-width 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: emerge 280ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-@keyframes drop {
-  from { opacity: 0; transform: translateY(-10px) scale(0.985); }
-  to   { opacity: 1; transform: none; }
+/* Grows downward out of the bezel rather than fading in. */
+@keyframes emerge {
+  from { transform: translateY(-14px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
 }
 
-/* Idle shrinks the card to just the words it contains. */
+/* At rest it contracts to a small lozenge, like the island with nothing in it. */
 [data-state="idle"] .card {
   max-width: max-content;
-  opacity: 0.5;
-  transition: opacity 200ms ease, max-width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  border-radius: 0 0 20px 20px;
+  opacity: 0.92;
 }
 [data-state="idle"] .card:hover { opacity: 1; }
+
+/* Docked to the bottom edge instead: the rounding flips so the flat side is
+   always the one fused to the bezel. */
+[data-position="bottom"] .stage { align-items: flex-end; padding: 28px 0 0; }
+[data-position="bottom"] .card { border-radius: var(--island-radius) var(--island-radius) 0 0; }
+[data-position="bottom"][data-state="idle"] .card { border-radius: 20px 20px 0 0; }
+[data-position="bottom"] .card { animation-name: emerge-up; }
+@keyframes emerge-up {
+  from { transform: translateY(14px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
 
 /* --- top bar --- */
 .bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px 16px;
-  min-height: 50px;
+  padding: 11px 20px 12px;
+  min-height: 44px;
 }
-[data-state="idle"] .bar { padding: 9px 16px; min-height: 0; }
+[data-state="idle"] .bar { padding: 8px 18px 9px; min-height: 0; }
 
 .dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   flex-shrink: 0;
   border-radius: var(--r-pill);
-  background: var(--ink-faint);
+  background: var(--island-faint);
   transition: background 180ms ease;
 }
 [data-state="listening"] .dot { background: var(--accent); animation: breathe 1.6s ease-in-out infinite; }
 [data-state="transcribing"] .dot,
 [data-state="thinking"] .dot,
 [data-state="polishing"] .dot,
-[data-state="inserting"] .dot { background: var(--ink-dim); animation: breathe 1s ease-in-out infinite; }
-[data-state="answer"] .dot { background: var(--ok); }
-[data-state="error"] .dot { background: var(--danger); }
+[data-state="inserting"] .dot { background: var(--island-dim); animation: breathe 1s ease-in-out infinite; }
+[data-state="answer"] .dot { background: #30d158; }
+[data-state="error"] .dot { background: #ff453a; }
 
 @keyframes breathe {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(251, 66, 104, 0.32); transform: scale(1); }
-  50%      { box-shadow: 0 0 0 8px rgba(251, 66, 104, 0); transform: scale(1.18); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251, 66, 104, 0.4); transform: scale(1); }
+  50%      { box-shadow: 0 0 0 7px rgba(251, 66, 104, 0); transform: scale(1.2); }
 }
 
 .bar-main { display: flex; align-items: baseline; gap: 9px; min-width: 0; flex: 1; }
 
 .label {
   font-size: 13px;
-  font-weight: 590;
+  font-weight: 600;
   letter-spacing: -0.012em;
   white-space: nowrap;
+  color: var(--island-text);
 }
 
 .hint {
   font-size: 12.5px;
-  color: var(--ink-dim);
+  color: var(--island-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* The waveform only occupies space while there is sound to draw. */
-.wave { display: none; width: 220px; height: 28px; flex-shrink: 0; }
+.wave { display: none; width: 200px; height: 26px; flex-shrink: 0; }
 [data-state="listening"] .wave { display: block; }
 [data-state="listening"] .hint { display: none; }
 
 .timer {
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  color: var(--ink-dim);
+  color: var(--island-dim);
   flex-shrink: 0;
 }
 .timer:empty { display: none; }
@@ -130,115 +159,109 @@ html, body {
   width: 22px;
   height: 22px;
   flex-shrink: 0;
-  color: var(--ink-faint);
+  color: var(--island-faint);
   background: transparent;
   border: none;
   border-radius: var(--r-pill);
   cursor: pointer;
   transition: background 130ms ease, color 130ms ease;
 }
-.close:hover { background: var(--hairline-soft); color: var(--ink); }
+.close:hover { background: var(--island-raised); color: var(--island-text); }
 [data-state="listening"] .close,
 [data-state="thinking"] .close,
 [data-state="answer"] .close,
 [data-state="error"] .close { display: grid; }
 
 /* --- body --- */
-.body { display: none; padding: 0 16px 14px; }
+.body { display: none; padding: 0 20px 16px; }
 [data-state="thinking"] .body,
 [data-state="answer"] .body,
 [data-state="error"] .body { display: block; }
 
+/* Collapse the body while it holds nothing. Without this, the moment between
+   "Transcribing…" and the first text renders as an empty black slab hanging
+   below the bar. */
+.body:not(:has(.has-content, .found:not([hidden]), .confirm:not([hidden]))) {
+  display: none;
+}
+
 .eyebrow {
   display: block;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 650;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--island-faint);
   margin-bottom: 5px;
 }
 
 .asked { padding-top: 2px; }
-.asked-text {
-  font-size: 14px;
-  line-height: 1.45;
-  color: var(--ink-soft);
-}
+.asked-text { font-size: 13.5px; line-height: 1.45; color: var(--island-dim); }
 .asked:not(.has-content) { display: none; }
 
-.answer { margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--hairline); }
+.answer { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--island-edge); }
 .answer:not(.has-content) { display: none; }
 
 .answer-text {
-  font-size: 14.5px;
-  line-height: 1.58;
-  color: var(--ink);
-  max-height: 260px;
+  font-size: 14px;
+  line-height: 1.56;
+  color: var(--island-text);
+  max-height: 250px;
   overflow-y: auto;
 }
 .answer-text p + p { margin-top: 9px; }
 .answer-text strong { font-weight: 600; }
 .answer-text code {
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  background: var(--page-sunk);
-  border: 1px solid var(--hairline);
+  font-size: 12px;
+  background: var(--island-raised);
   border-radius: 5px;
   padding: 1px 5px;
 }
-.answer-text::-webkit-scrollbar { width: 7px; }
-.answer-text::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 99px; }
+.answer-text::-webkit-scrollbar { width: 6px; }
+.answer-text::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 99px; }
 
 /* --- what it found --- */
-.found { margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--hairline); }
-.found-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.found { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--island-edge); }
+.found-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
 
 .found-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   font-size: 12.5px;
-  color: var(--ink-soft);
-  background: var(--page);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-sm);
+  background: var(--island-raised);
+  border-radius: 10px;
   padding: 8px 11px;
 }
-.found-icon {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-  border-radius: 4px;
-  object-fit: contain;
-}
+.found-icon { width: 18px; height: 18px; flex-shrink: 0; border-radius: 4px; object-fit: contain; }
 .found-glyph { width: 18px; text-align: center; font-size: 13px; flex-shrink: 0; }
 .found-main { flex: 1; min-width: 0; }
 .found-title {
   font-weight: 550;
-  color: var(--ink);
+  color: var(--island-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.found-sub { font-size: 11.5px; color: var(--ink-faint); }
+.found-sub { font-size: 11.5px; color: var(--island-faint); margin-top: 1px; }
 
 /* --- confirmation ---
-   Anything that sends, creates or changes shows exactly what will happen and
-   waits. This is the one place the card ever blocks. */
+   The one place the island blocks: anything that sends, creates or changes
+   states what will happen and waits. */
 .confirm {
-  margin-top: 15px;
+  margin-top: 14px;
   padding: 13px;
-  background: rgba(251, 66, 104, 0.05);
-  border: 1px solid rgba(251, 66, 104, 0.28);
-  border-radius: var(--r-md);
+  background: rgba(251, 66, 104, 0.12);
+  border: 1px solid rgba(251, 66, 104, 0.34);
+  border-radius: 14px;
 }
 .confirm-head { display: flex; gap: 10px; }
 .confirm-icon {
   display: grid;
   place-items: center;
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 700;
@@ -246,12 +269,12 @@ html, body {
   background: var(--accent);
   border-radius: var(--r-pill);
 }
-.confirm-head strong { display: block; font-size: 13px; font-weight: 590; }
-.confirm-head p { font-size: 12.5px; color: var(--ink-dim); margin-top: 3px; line-height: 1.5; }
+.confirm-head strong { display: block; font-size: 13px; font-weight: 600; color: var(--island-text); }
+.confirm-head p { font-size: 12.5px; color: var(--island-dim); margin-top: 3px; line-height: 1.5; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 11px; }
 
 /* --- actions --- */
-.actions { display: flex; align-items: center; gap: 7px; margin-top: 15px; }
+.actions { display: flex; align-items: center; gap: 7px; margin-top: 14px; }
 [data-state="thinking"] .actions,
 [data-state="error"] .actions { display: none; }
 .spacer { flex: 1; }
@@ -260,35 +283,35 @@ html, body {
   font: inherit;
   font-size: 12px;
   font-weight: 550;
-  color: var(--ink-soft);
-  background: var(--page);
-  border: 1px solid var(--hairline);
+  color: var(--island-dim);
+  background: var(--island-raised);
+  border: 1px solid transparent;
   border-radius: var(--r-pill);
   padding: 5px 13px;
   cursor: pointer;
-  transition: border-color 130ms ease, color 130ms ease, background 130ms ease;
+  transition: color 130ms ease, background 130ms ease;
 }
-.chip:hover { border-color: var(--accent); color: var(--accent); }
-.chip.is-done { border-color: var(--ok); color: var(--ok); }
+.chip:hover { color: var(--island-text); background: rgba(255, 255, 255, 0.13); }
+.chip.is-done { color: #30d158; background: rgba(48, 209, 88, 0.16); }
 
 .btn {
   font: inherit;
   font-size: 12.5px;
   font-weight: 560;
-  border-radius: var(--r-sm);
+  border-radius: 9px;
   padding: 6px 14px;
   cursor: pointer;
   border: 1px solid transparent;
 }
-.btn-quiet { color: var(--ink-soft); background: var(--page); border-color: var(--hairline); }
-.btn-quiet:hover { background: var(--page-sunk); }
+.btn-quiet { color: var(--island-dim); background: var(--island-raised); }
+.btn-quiet:hover { color: var(--island-text); background: rgba(255, 255, 255, 0.13); }
 .btn-go { color: #fff; background: var(--accent); }
 .btn-go:hover { background: var(--accent-hover); }
 
-.meta { font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.meta { font-size: 11px; color: var(--island-faint); font-variant-numeric: tabular-nums; }
 
 /* --- error --- */
-[data-state="error"] .answer-text { color: var(--danger); }
+[data-state="error"] .answer-text { color: #ff8a80; }
 
 @media (prefers-reduced-motion: reduce) {
   .card { animation: none; transition: none; }

@@ -10,10 +10,12 @@
       justify-content: center;
       align-items: flex-start;
       background:
-        radial-gradient(1000px 520px at 22% 12%, #d9e8ff 0%, transparent 60%),
-        radial-gradient(820px 460px at 82% 26%, #ffdde7 0%, transparent 56%),
-        linear-gradient(165deg, #eef4ff 0%, #fafbfd 52%, #e9eef6 100%);
+        linear-gradient(180deg, #1b4fd8 0%, #2f7ae5 26%, #7bb3f0 52%, #f2c14e 78%, #e8e3d8 100%);
       font-family: -apple-system, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    }
+    .wallpaper-note {
+      position: fixed; top: 140px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,.75); font-size: 13px; letter-spacing: .02em;
     }
     .controls {
       position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
@@ -28,10 +30,11 @@
     }
     .controls button:hover { background: #f9fafb; }
     .controls button.on { background: #111827; color: #fff; border-color: #111827; }
-    iframe { width: 600px; height: 520px; border: 0; }
+    iframe { width: 600px; height: 520px; border: 0; display: block; }
   </style>
 </head>
 <body>
+  <div class="wallpaper-note">desktop behind the island</div>
   <iframe id="frame" src="index.html" scrolling="no"></iframe>
 
   <div class="controls">

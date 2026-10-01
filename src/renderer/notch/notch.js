@@ -371,7 +371,13 @@ function prettyKey(accelerator) {
 
 // --- Events from the main process ----------------------------------------
 
-window.voiceos.onSessionIdle(({ hotkeys } = {}) => {
+/** The island's rounding depends on which bezel it is fused to. */
+function applyPosition(position) {
+  if (position) document.documentElement.dataset.position = position;
+}
+
+window.voiceos.onSessionIdle(({ hotkeys, position } = {}) => {
+  applyPosition(position);
   teardownCapture();
   stopTimer();
   clearBody();
@@ -381,7 +387,10 @@ window.voiceos.onSessionIdle(({ hotkeys } = {}) => {
   setState('idle', { label: 'VoiceOS', hint: `Press ${prettyKey(key)} to dictate` });
 });
 
-window.voiceos.onSessionStart(({ mode, config }) => startCapture(mode, config));
+window.voiceos.onSessionStart(({ mode, config, position }) => {
+  applyPosition(position);
+  startCapture(mode, config);
+});
 window.voiceos.onSessionStop(() => finishCapture());
 window.voiceos.onSessionCancel(() => window.voiceos.requestIdle());
 
