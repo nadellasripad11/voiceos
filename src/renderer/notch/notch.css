@@ -79,7 +79,26 @@ html, body {
   border-radius: 0 0 20px 20px;
   opacity: 0.92;
 }
-[data-state="idle"] .card:hover { opacity: 1; }
+[data-state="idle"] .card:hover {
+  opacity: 1;
+  border-radius: 0 0 24px 24px;
+  transform: scale(1.06);
+  transform-origin: top center;
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.52),
+    0 3px 12px rgba(0, 0, 0, 0.34);
+}
+[data-state="idle"] .card {
+  transform-origin: top center;
+  transition:
+    max-width 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 260ms ease,
+    opacity 200ms ease;
+}
+[data-state="idle"] .card:hover .bar { padding: 10px 22px 11px; }
+[data-state="idle"] .bar { transition: padding 260ms cubic-bezier(0.32, 0.72, 0, 1); }
 
 /* Docked to the bottom edge instead: the rounding flips so the flat side is
    always the one fused to the bezel. */

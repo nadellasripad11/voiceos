@@ -21,6 +21,9 @@ const { WhisperEngine } = require('../core/stt/whisper');
 const { createProvider } = require('../core/llm/provider');
 const { TranscriptStore } = require('../core/memory/transcripts');
 const { DictationMode } = require('../core/modes/dictation');
+const { Agent } = require('../core/agent/agent');
+const { PiperTts, speakableSummary } = require('../core/tts/piper');
+const { getBrowser } = require('../core/browser/cdp');
 const { createLogger } = require('./logger');
 
 const isDev = process.argv.includes('--dev');
@@ -32,7 +35,10 @@ const services = {
   stt: null,
   provider: null,
   transcripts: null,
-  dictation: null
+  dictation: null,
+  agent: null,
+  tts: null,
+  browser: null
 };
 
 const windows = {
@@ -153,6 +159,26 @@ async function initServices() {
   services.stt = buildStt();
   services.provider = buildProvider();
   services.transcripts = new TranscriptStore({ config, logger });
+  services.tts = new PiperTts({
+    voice: config.get('tts.voice'),
+    speed: config.get('tts.speed'),
+    logger
+  });
+  services.browser = getBrowser({
+    logger,
+    profile: config.get('browser.profile', 'voiceos'),
+    headless: config.get('browser.headless', false)
+  });
+  services.agent = new Agent({
+    provider: services.provider,
+    config,
+    bridge: services.bridge,
+    browser: services.browser,
+    tts: services.tts,
+    logger,
+    requestConfirmation
+  });
+
   services.dictation = new DictationMode({
     stt: services.stt,
     provider: services.provider,
@@ -185,6 +211,16 @@ async function initServices() {
 function reloadServices() {
   services.stt = buildStt();
   services.provider = buildProvider();
+  services.tts = new PiperTts({ voice: config.get('tts.voice'), speed: config.get('tts.speed'), logger });
+  services.agent = new Agent({
+    provider: services.provider,
+    config,
+    bridge: services.bridge,
+    browser: services.browser,
+    tts: services.tts,
+    logger,
+    requestConfirmation
+  });
   services.dictation = new DictationMode({
     stt: services.stt,
     provider: services.provider,
@@ -564,11 +600,35 @@ function registerIpc() {
         broadcast('session-result', result);
         return result;
       }
-      // Edit and Agent modes arrive in the next layers; dictation is the path
-      // that is complete and tested today.
+      if (activeMode === 'agent') {
+        // Agent Mode needs the raw words, not polished prose, so it transcribes
+        // without the dictation formatting pass.
+        const transcript = await transcribeOnly(samples, sampleRate, signal);
+        if (!transcript) {
+          broadcast('session-error', { message: 'No speech heard', detail: 'Try again a little closer to the microphone.' });
+          return { ok: false, reason: 'silence' };
+        }
+
+        broadcast('agent-result', { question: transcript, answer: '', found: [], pending: true });
+        const result = await services.agent.run(transcript, {
+          signal,
+          onStage: (stage, detail) => broadcast('session-stage', { stage, detail })
+        });
+
+        broadcast('agent-result', result);
+        speak(result.answer);
+
+        if (services.transcripts) {
+          services.transcripts.append({
+            mode: 'agent', text: result.answer, raw: transcript, ms: result.ms
+          }).catch(() => {});
+        }
+        return result;
+      }
+
       broadcast('session-error', {
         message: `${activeMode} mode is not wired up yet`,
-        detail: 'Dictation Mode is available now.'
+        detail: 'Dictation and Agent are available now.'
       });
       return { ok: false, reason: `${activeMode} not implemented` };
     } catch (err) {
@@ -761,6 +821,52 @@ function registerIpc() {
     config.set('apps', apps);
     return { ok: true };
   });
+}
+
+/**
+ * Transcribes captured audio and returns the plain text.
+ *
+ * Agent Mode wants what was actually said. Running it through the dictation
+ * polish pass would rewrite the request before the agent ever sees it.
+ */
+async function transcribeOnly(samples, sampleRate, signal) {
+  const { writeWav, floatToPcm16, trimSilence } = require('../core/audio/wav');
+  const trimmed = trimSilence(samples, { threshold: config.get('stt.vad.threshold'), sampleRate });
+  if (!trimmed.length) return '';
+
+  const wavPath = path.join(paths.tmp, `agent-${Date.now()}.wav`);
+  writeWav(wavPath, floatToPcm16(trimmed), { sampleRate });
+  try {
+    const vocabulary = config.get('dictation.vocabulary', []);
+    const result = await services.stt.transcribe(wavPath, {
+      language: config.get('stt.language') === 'auto' ? undefined : config.get('stt.language'),
+      prompt: vocabulary.length ? `Vocabulary: ${vocabulary.slice(0, 60).join(', ')}.` : undefined,
+      signal
+    });
+    return result.text;
+  } finally {
+    fs.rmSync(wavPath, { force: true });
+  }
+}
+
+/**
+ * Speaks a reply aloud.
+ *
+ * Synthesis happens here and the audio is handed to the overlay to play, so
+ * playback stays in the browser audio stack and needs no native dependency.
+ * Failure is never fatal: the answer is already on screen.
+ */
+async function speak(text) {
+  if (!config.get('tts.enabled', true)) return;
+  if (!config.get('tts.speakAgentReplies', true)) return;
+  const line = speakableSummary(text);
+  if (!line) return;
+  try {
+    const audio = await services.tts.synthesizeBase64(line, { speed: config.get('tts.speed', 1) });
+    broadcast('speak', { data: audio.data, voice: audio.voice });
+  } catch (err) {
+    logger.warn(`[tts] ${err.message}`);
+  }
 }
 
 /** Mirror of floatToPcm16 in core/audio/wav.js. */

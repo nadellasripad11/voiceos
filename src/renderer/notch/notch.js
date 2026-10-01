@@ -177,15 +177,29 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function animate() {
+const BAR_INTERVAL_MS = 85;   // ~12 new bars a second
+const SMOOTHING = 0.35;       // how quickly a bar chases its target
+
+let lastAdvance = 0;
+let currentLevel = 0;
+
+function animate(now = performance.now()) {
   if (capture.analyser) {
     const buf = new Float32Array(capture.analyser.fftSize);
     capture.analyser.getFloatTimeDomainData(buf);
-    levels.push(Math.min(1, rms(buf) * 7));
+    const target = Math.min(1, rms(buf) * 7);
+    // Ease toward the measured level so a single loud frame does not spike.
+    currentLevel += (target - currentLevel) * SMOOTHING;
   } else {
-    levels.push(0);
+    currentLevel += (0 - currentLevel) * SMOOTHING;
   }
-  levels.shift();
+
+  if (now - lastAdvance >= BAR_INTERVAL_MS) {
+    lastAdvance = now;
+    levels.push(currentLevel);
+    levels.shift();
+  }
+
   drawWave();
   capture.rafHandle = requestAnimationFrame(animate);
 }
@@ -421,6 +435,16 @@ window.voiceos.onSessionResult((result) => {
 
 /** Agent finished: the answer, what it looked at, and anything awaiting approval. */
 window.voiceos.onAgentResult((payload) => {
+  // The first message carries only the question, so the user sees what was
+  // heard while the agent is still working.
+  if (payload.pending) {
+    stopTimer();
+    el.timer.textContent = '';
+    setState('thinking', { label: 'Agent', hint: 'Working…' });
+    clearBody();
+    showAsked(payload.question);
+    return;
+  }
   stopTimer();
   el.timer.textContent = '';
   currentResult = payload;
@@ -440,6 +464,20 @@ window.voiceos.onAgentResult((payload) => {
 });
 
 window.voiceos.onSessionError(({ message, detail }) => fail(message, detail));
+
+/**
+ * Plays a spoken reply.
+ *
+ * Only one reply is ever audible: a new answer cuts off the previous one rather
+ * than letting two voices overlap.
+ */
+let speaking = null;
+window.voiceos.onSpeak(({ data }) => {
+  if (!data) return;
+  if (speaking) { try { speaking.pause(); } catch {} }
+  speaking = new Audio('data:audio/wav;base64,' + data);
+  speaking.play().catch((err) => console.warn('[tts] playback blocked:', err.message));
+});
 
 // --- Card actions ---------------------------------------------------------
 

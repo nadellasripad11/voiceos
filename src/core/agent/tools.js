@@ -1,0 +1,518 @@
+'use strict';
+/**
+ * Agent tools.
+ *
+ * Each tool pairs a JSON schema the model can call with an executor that does
+ * the real work through the native bridge, the browser controller, or the
+ * filesystem. Tools declare `mutating: true` when they send, create, change or
+ * delete; the agent must get the user's approval before running those.
+ *
+ * Only tools whose app is enabled and whose platform matches are exposed, so
+ * the model is never offered something that cannot run.
+ */
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { paths } = require('../paths');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Shorthand for a JSON-schema object. */
+const obj = (properties, required = []) => ({ type: 'object', properties, required });
+const str = (description) => ({ type: 'string', description });
+const num = (description) => ({ type: 'number', description });
+
+// --- This PC --------------------------------------------------------------
+
+const systemTools = (ctx) => [
+  {
+    name: 'open_app',
+    appId: 'system',
+    description: 'Open an application on this computer by name, for example Spotify, Chrome, Notepad.',
+    parameters: obj({ name: str('The application name') }, ['name']),
+    mutating: true,
+    confirm: (args) => ({ title: `Open ${args.name}?`, detail: 'Launches the application.' }),
+    run: async ({ name }) => {
+      const r = await ctx.bridge.openApp(name);
+      return { ok: true, summary: `Opened ${r.name || name}.`, found: [{ glyph: '🖥️', title: name, subtitle: 'Launched' }] };
+    }
+  },
+  {
+    name: 'open_url',
+    appId: 'system',
+    description: 'Open a web page in the default browser.',
+    parameters: obj({ url: str('The full URL to open') }, ['url']),
+    mutating: true,
+    confirm: (args) => ({ title: 'Open this page?', detail: args.url }),
+    run: async ({ url }) => {
+      const safe = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+      await ctx.bridge.openUrl(safe);
+      return { ok: true, summary: `Opened ${safe}.`, found: [{ glyph: '🌐', title: safe, subtitle: 'Opened in your browser' }] };
+    }
+  },
+  {
+    name: 'list_windows',
+    appId: 'system',
+    description: 'List the windows currently open on this computer.',
+    parameters: obj({}),
+    run: async () => {
+      const wins = await ctx.bridge.listWindows();
+      return {
+        ok: true,
+        summary: wins.length
+          ? `${wins.length} windows open: ${wins.map((w) => w.process).join(', ')}.`
+          : 'No windows are open.',
+        found: wins.slice(0, 8).map((w) => ({ glyph: '🪟', title: w.title || w.process, subtitle: w.process }))
+      };
+    }
+  },
+  {
+    name: 'read_screen',
+    appId: 'system',
+    description: 'Read the text currently visible on screen. Use when the user asks about what they are looking at.',
+    parameters: obj({}),
+    run: async () => {
+      if (ctx.config.get('privacy.privateMode')) {
+        return { ok: false, summary: 'Private Mode is on, so I cannot read the screen.' };
+      }
+      const shot = path.join(paths.tmp, `screen-${Date.now()}.png`);
+      try {
+        const r = await ctx.bridge.ocrScreen(shot);
+        const text = (r.text || '').replace(/\s+/g, ' ').trim();
+        return {
+          ok: true,
+          summary: text ? text.slice(0, 4000) : 'I could not read any text on screen.',
+          found: [{ glyph: '👁️', title: 'Screen text', subtitle: `${(r.lines || []).length} lines read` }]
+        };
+      } finally {
+        fs.rmSync(shot, { force: true });
+      }
+    }
+  },
+  {
+    name: 'read_selection',
+    appId: 'system',
+    description: 'Read the text the user currently has selected.',
+    parameters: obj({}),
+    run: async () => {
+      const sel = await ctx.bridge.selection();
+      return {
+        ok: true,
+        summary: sel.text ? sel.text.slice(0, 4000) : 'Nothing is selected.',
+        found: sel.text ? [{ glyph: '✂️', title: 'Selected text', subtitle: `${sel.text.length} characters` }] : []
+      };
+    }
+  },
+  {
+    name: 'set_volume',
+    appId: 'system',
+    description: 'Turn the system volume up, down, or mute it.',
+    parameters: obj({ direction: { type: 'string', enum: ['up', 'down', 'mute'], description: 'Which way to change the volume' },
+                      steps: num('How many steps, default 4') }),
+    mutating: true,
+    autoConfirm: true,
+    run: async ({ direction, steps = 4 }) => {
+      const key = { up: 'volume_up', down: 'volume_down', mute: 'volume_mute' }[direction] || 'volume_up';
+      const times = direction === 'mute' ? 1 : Math.max(1, Math.min(20, steps));
+      for (let i = 0; i < times; i++) await ctx.bridge.mediaKey(key);
+      return { ok: true, summary: direction === 'mute' ? 'Toggled mute.' : `Turned the volume ${direction}.` };
+    }
+  }
+];
+
+// --- Media ----------------------------------------------------------------
+
+const mediaTools = (ctx) => [
+  {
+    name: 'now_playing',
+    appId: 'spotify',
+    description: 'Find out what music or video is currently playing.',
+    parameters: obj({}),
+    run: async () => {
+      const r = await ctx.bridge.mediaStatus();
+      if (!r.current) return { ok: true, summary: 'Nothing is playing right now.' };
+      const c = r.current;
+      const who = c.artist ? ` by ${c.artist}` : '';
+      return {
+        ok: true,
+        summary: `${c.status === 'Playing' ? 'Playing' : c.status}: ${c.title}${who}.`,
+        found: [{
+          icon: 'spotify.webp',
+          title: c.title || 'Unknown track',
+          subtitle: [c.artist, c.album, c.app].filter(Boolean).join(' · ')
+        }]
+      };
+    }
+  },
+  {
+    name: 'control_playback',
+    appId: 'spotify',
+    description: 'Play, pause, skip to the next track, or go back to the previous track.',
+    parameters: obj({
+      action: { type: 'string', enum: ['play', 'pause', 'toggle', 'next', 'previous'], description: 'What to do' },
+      app: str('Optional player name, e.g. Spotify')
+    }, ['action']),
+    mutating: true,
+    autoConfirm: true,
+    run: async ({ action, app }) => {
+      const r = await ctx.bridge.mediaControl(action, { app });
+      if (!r.ok) return { ok: false, summary: r.error || 'Nothing is playing.' };
+      const s = r.state || {};
+      const verb = { play: 'Playing', pause: 'Paused', toggle: 'Toggled', next: 'Skipped to', previous: 'Went back to' }[action];
+      return {
+        ok: true,
+        summary: s.title ? `${verb} ${s.title}${s.artist ? ` by ${s.artist}` : ''}.` : `${verb}.`,
+        found: s.title ? [{ icon: 'spotify.webp', title: s.title, subtitle: [s.artist, s.status].filter(Boolean).join(' · ') }] : []
+      };
+    }
+  }
+];
+
+// --- Web search -----------------------------------------------------------
+
+const webTools = (ctx) => [
+  {
+    name: 'search_web',
+    appId: 'web-search',
+    description: 'Search the web and get a short list of results with sources. Use for current facts.',
+    parameters: obj({ query: str('What to search for') }, ['query']),
+    run: async ({ query }) => {
+      const results = await duckDuckGo(query);
+      if (!results.length) return { ok: true, summary: `I found nothing for "${query}".` };
+      return {
+        ok: true,
+        summary: results.slice(0, 5).map((r, i) => `${i + 1}. ${r.title} — ${r.snippet}`).join('\n'),
+        found: results.slice(0, 5).map((r) => ({ glyph: '🔍', title: r.title, subtitle: r.url }))
+      };
+    }
+  },
+  {
+    name: 'answer_from_web',
+    appId: 'web-search',
+    description: 'Look up a direct factual answer, such as a definition, a conversion, or who someone is.',
+    parameters: obj({ query: str('The question to look up') }, ['query']),
+    run: async ({ query }) => {
+      const instant = await duckDuckGoInstant(query);
+      if (instant) {
+        return {
+          ok: true,
+          summary: instant.text,
+          found: [{ glyph: '📘', title: instant.heading || query, subtitle: instant.source || 'DuckDuckGo' }]
+        };
+      }
+      const results = await duckDuckGo(query);
+      if (!results.length) return { ok: true, summary: `I could not find an answer for "${query}".` };
+      return {
+        ok: true,
+        summary: results[0].snippet || results[0].title,
+        found: results.slice(0, 3).map((r) => ({ glyph: '🔍', title: r.title, subtitle: r.url }))
+      };
+    }
+  },
+  {
+    name: 'fetch_page',
+    appId: 'web-search',
+    description: 'Read the text of a specific web page.',
+    parameters: obj({ url: str('The page URL') }, ['url']),
+    run: async ({ url }) => {
+      const safe = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+      const res = await fetch(safe, {
+        headers: { 'User-Agent': 'Mozilla/5.0 VoiceOS' },
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!res.ok) return { ok: false, summary: `That page returned HTTP ${res.status}.` };
+      const html = await res.text();
+      const text = stripHtml(html).slice(0, 6000);
+      return {
+        ok: true,
+        summary: text,
+        found: [{ glyph: '📄', title: new URL(safe).hostname, subtitle: `${text.length} characters read` }]
+      };
+    }
+  }
+];
+
+/** DuckDuckGo's HTML endpoint: no API key, no quota, no cost. */
+async function duckDuckGo(query) {
+  const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    signal: AbortSignal.timeout(15000)
+  });
+  if (!res.ok) return [];
+  const html = await res.text();
+  const out = [];
+  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+  let m;
+  while ((m = re.exec(html)) && out.length < 8) {
+    out.push({
+      url: decodeDdgUrl(m[1]),
+      title: stripHtml(m[2]).trim(),
+      snippet: stripHtml(m[3]).trim()
+    });
+  }
+  return out;
+}
+
+/** DuckDuckGo's Instant Answer API, for definitions and quick facts. */
+async function duckDuckGoInstant(query) {
+  try {
+    const res = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    const text = d.AbstractText || d.Answer || (d.RelatedTopics && d.RelatedTopics[0] && d.RelatedTopics[0].Text);
+    if (!text) return null;
+    return { text, heading: d.Heading, source: d.AbstractSource };
+  } catch {
+    return null;
+  }
+}
+
+function decodeDdgUrl(href) {
+  const m = /uddg=([^&]+)/.exec(href);
+  return m ? decodeURIComponent(m[1]) : href;
+}
+
+function stripHtml(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// --- Files ----------------------------------------------------------------
+
+/** Folders the agent may look in. Everything else is off limits. */
+function allowedRoots(ctx) {
+  const configured = ctx.config.get('apps.files.config.roots', null);
+  if (Array.isArray(configured) && configured.length) return configured;
+  const home = os.homedir();
+  return ['Documents', 'Downloads', 'Desktop', 'Pictures'].map((d) => path.join(home, d));
+}
+
+function insideAllowedRoot(ctx, target) {
+  const resolved = path.resolve(target);
+  return allowedRoots(ctx).some((root) => resolved.startsWith(path.resolve(root)));
+}
+
+const fileTools = (ctx) => [
+  {
+    name: 'search_files',
+    appId: 'files',
+    description: 'Find a file by name in the user\'s documents, downloads, desktop or pictures.',
+    parameters: obj({ query: str('Part of the file name'), limit: num('Max results, default 10') }, ['query']),
+    run: async ({ query, limit = 10 }) => {
+      const needle = String(query).toLowerCase();
+      const hits = [];
+      for (const root of allowedRoots(ctx)) {
+        walk(root, 4, (file, stat) => {
+          if (hits.length >= limit) return false;
+          if (path.basename(file).toLowerCase().includes(needle)) {
+            hits.push({ file, size: stat.size, mtime: stat.mtime });
+          }
+          return true;
+        });
+        if (hits.length >= limit) break;
+      }
+      if (!hits.length) return { ok: true, summary: `I could not find any file matching "${query}".` };
+      return {
+        ok: true,
+        summary: `Found ${hits.length} file${hits.length === 1 ? '' : 's'} matching "${query}".`,
+        found: hits.map((h) => ({
+          glyph: '📄',
+          title: path.basename(h.file),
+          subtitle: `${path.dirname(h.file)} · ${formatSize(h.size)}`
+        }))
+      };
+    }
+  },
+  {
+    name: 'open_file',
+    appId: 'files',
+    description: 'Open a file in its default application.',
+    parameters: obj({ filePath: str('Full path to the file') }, ['filePath']),
+    mutating: true,
+    confirm: (args) => ({ title: 'Open this file?', detail: args.filePath }),
+    run: async ({ filePath }) => {
+      if (!insideAllowedRoot(ctx, filePath)) {
+        return { ok: false, summary: 'That file is outside the folders I am allowed to open.' };
+      }
+      await ctx.bridge.openPath(filePath);
+      return { ok: true, summary: `Opened ${path.basename(filePath)}.` };
+    }
+  }
+];
+
+function walk(dir, depth, visit) {
+  if (depth < 0) return;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      walk(full, depth - 1, visit);
+    } else {
+      let stat;
+      try { stat = fs.statSync(full); } catch { continue; }
+      if (visit(full, stat) === false) return;
+    }
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes > 1024 ** 3) return (bytes / 1024 ** 3).toFixed(1) + ' GB';
+  if (bytes > 1024 ** 2) return (bytes / 1024 ** 2).toFixed(1) + ' MB';
+  return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+}
+
+// --- Notes and reminders --------------------------------------------------
+
+const noteTools = (ctx) => [
+  {
+    name: 'take_note',
+    appId: 'notes',
+    description: 'Save a note for the user.',
+    parameters: obj({ text: str('The note content'), title: str('Optional title') }, ['text']),
+    mutating: true,
+    autoConfirm: true,
+    run: async ({ text, title }) => {
+      const dir = path.join(paths.userData, 'notes');
+      fs.mkdirSync(dir, { recursive: true });
+      const name = (title || `Note ${new Date().toLocaleString()}`).replace(/[^\w\s-]/g, '').trim();
+      const file = path.join(dir, `${name || 'note'}.md`);
+      fs.appendFileSync(file, `${text}\n\n`, 'utf8');
+      return { ok: true, summary: 'Saved the note.', found: [{ glyph: '📝', title: name, subtitle: 'Saved to your notes' }] };
+    }
+  },
+  {
+    name: 'create_reminder',
+    appId: 'todo',
+    description: 'Remind the user about something at a given time.',
+    parameters: obj({ text: str('What to be reminded about'), when: str('When, e.g. "in 20 minutes" or "tomorrow 9am"') }, ['text']),
+    mutating: true,
+    autoConfirm: true,
+    run: async ({ text, when }) => {
+      const at = parseWhen(when);
+      const store = path.join(paths.userData, 'reminders.json');
+      let list = [];
+      try { list = JSON.parse(fs.readFileSync(store, 'utf8')); } catch {}
+      list.push({ id: Date.now(), text, at: at ? at.toISOString() : null, created: new Date().toISOString(), done: false });
+      fs.writeFileSync(store, JSON.stringify(list, null, 2), 'utf8');
+      return {
+        ok: true,
+        summary: at ? `I will remind you ${when} — ${text}.` : `Saved the reminder: ${text}.`,
+        found: [{ glyph: '⏰', title: text, subtitle: at ? at.toLocaleString() : 'No time set' }]
+      };
+    }
+  },
+  {
+    name: 'list_reminders',
+    appId: 'todo',
+    description: 'List the user\'s reminders.',
+    parameters: obj({}),
+    run: async () => {
+      const store = path.join(paths.userData, 'reminders.json');
+      let list = [];
+      try { list = JSON.parse(fs.readFileSync(store, 'utf8')); } catch {}
+      const open = list.filter((r) => !r.done);
+      if (!open.length) return { ok: true, summary: 'You have no reminders.' };
+      return {
+        ok: true,
+        summary: `You have ${open.length} reminder${open.length === 1 ? '' : 's'}.`,
+        found: open.slice(0, 8).map((r) => ({
+          glyph: '⏰',
+          title: r.text,
+          subtitle: r.at ? new Date(r.at).toLocaleString() : 'No time set'
+        }))
+      };
+    }
+  }
+];
+
+/** Parses the handful of time phrasings people actually say out loud. */
+function parseWhen(when) {
+  if (!when) return null;
+  const s = String(when).toLowerCase().trim();
+  const now = new Date();
+
+  let m = /in\s+(\d+)\s*(second|sec|minute|min|hour|hr|day)s?/.exec(s);
+  if (m) {
+    const n = Number(m[1]);
+    const unit = m[2];
+    const ms = unit.startsWith('sec') ? n * 1000
+      : unit.startsWith('min') ? n * 60000
+      : unit.startsWith('hour') || unit.startsWith('hr') ? n * 3600000
+      : n * 86400000;
+    return new Date(now.getTime() + ms);
+  }
+
+  m = /(tomorrow|today)?\s*(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/.exec(s);
+  if (m && m[2]) {
+    const d = new Date(now);
+    if (m[1] === 'tomorrow') d.setDate(d.getDate() + 1);
+    let hour = Number(m[2]);
+    if (m[4] === 'pm' && hour < 12) hour += 12;
+    if (m[4] === 'am' && hour === 12) hour = 0;
+    d.setHours(hour, Number(m[3] || 0), 0, 0);
+    if (d <= now && !m[1]) d.setDate(d.getDate() + 1);
+    return d;
+  }
+  return null;
+}
+
+// --- Registry -------------------------------------------------------------
+
+/**
+ * Builds the tool list for this run.
+ *
+ * Filters to apps the user has enabled so the model is never offered something
+ * that would fail, and so a disabled integration genuinely cannot be reached.
+ */
+function buildTools(ctx) {
+  const all = [
+    ...systemTools(ctx),
+    ...mediaTools(ctx),
+    ...webTools(ctx),
+    ...fileTools(ctx),
+    ...noteTools(ctx)
+  ];
+
+  const apps = ctx.config.get('apps', {});
+  const alwaysOn = new Set(['system', 'web-search']);
+
+  return all.filter((t) => {
+    if (alwaysOn.has(t.appId)) return true;
+    const entry = apps[t.appId];
+    return entry ? entry.enabled !== false : true;
+  });
+}
+
+/** The schema list handed to the model. */
+function toolSchemas(tools) {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters
+  }));
+}
+
+module.exports = {
+  buildTools,
+  toolSchemas,
+  duckDuckGo,
+  duckDuckGoInstant,
+  stripHtml,
+  parseWhen,
+  allowedRoots
+};
