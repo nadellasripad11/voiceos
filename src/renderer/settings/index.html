@@ -10,33 +10,99 @@
 <body>
   <aside class="sidebar">
     <div class="brand">
-      <span class="brand-dot"></span>
-      <span class="brand-name">VoiceOS</span>
+      <span class="brand-mark">voice<span class="brand-o">●</span>s</span>
+      <span class="brand-tag">LOCAL</span>
     </div>
 
     <nav id="nav">
-      <button class="nav-item is-active" data-panel="history">History</button>
-      <button class="nav-item" data-panel="dictation">Dictation</button>
-      <button class="nav-item" data-panel="agent">Agent</button>
-      <button class="nav-item" data-panel="appstore">App Store</button>
-      <button class="nav-item" data-panel="settings">Settings</button>
+      <button class="nav-item is-active" data-panel="dashboard">
+        <svg viewBox="0 0 16 16" class="nav-icon"><path d="M2 6.5 8 2l6 4.5V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>
+        Dashboard
+      </button>
+      <button class="nav-item" data-panel="insights">
+        <svg viewBox="0 0 16 16" class="nav-icon"><path d="M2.5 13V9M6.5 13V4M10.5 13V7M14 13V2"/></svg>
+        Insights
+      </button>
+      <button class="nav-item" data-panel="history">
+        <svg viewBox="0 0 16 16" class="nav-icon"><path d="M8 4v4l2.5 2M2 8a6 6 0 1 0 1.8-4.3M2 2v3h3"/></svg>
+        History
+      </button>
+      <button class="nav-item" data-panel="dictation">
+        <svg viewBox="0 0 16 16" class="nav-icon"><path d="M8 2a2 2 0 0 1 2 2v4a2 2 0 1 1-4 0V4a2 2 0 0 1 2-2zM4 8a4 4 0 0 0 8 0M8 12v2"/></svg>
+        Dictation
+      </button>
+      <button class="nav-item" data-panel="agent">
+        <svg viewBox="0 0 16 16" class="nav-icon"><path d="m8 1.5 1.6 4.2 4.4.3-3.4 2.8 1.1 4.3L8 10.7l-3.7 2.4 1.1-4.3L2 6l4.4-.3z"/></svg>
+        Agent
+      </button>
+      <button class="nav-item" data-panel="apps">
+        <svg viewBox="0 0 16 16" class="nav-icon"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>
+        Apps
+      </button>
     </nav>
 
     <div class="sidebar-foot">
-      <div class="shortcut-hint">
-        <div><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd> Dictate</div>
-        <div><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Space</kbd> Agent</div>
+      <div class="user" id="userChip">
+        <span class="avatar" id="avatar">S</span>
+        <span class="user-name" id="userName">You</span>
+        <svg viewBox="0 0 16 16" class="chev"><path d="m4 6 4 4 4-4"/></svg>
       </div>
-      <div class="status-line" id="statusLine">Checking…</div>
     </div>
   </aside>
 
   <main class="content">
-    <!-- History: the default view, a running log of everything you have said. -->
-    <section class="panel is-active" data-panel="history">
+
+    <!-- Dashboard -->
+    <section class="panel is-active" data-panel="dashboard">
+      <h1>Dashboard</h1>
+      <p class="lede">Everything VoiceOS needs, and whether it is working.</p>
+
+      <div class="tiles" id="healthTiles"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">⌨</span>
+          <div>
+            <h2>Shortcuts</h2>
+            <p>Press these anywhere. Press again to finish.</p>
+          </div>
+        </div>
+        <div class="shortcut-rows" id="shortcutRows"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">🎙</span>
+          <div>
+            <h2>Microphone</h2>
+            <p>Your live input level while dictating.</p>
+          </div>
+        </div>
+        <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
+      </div>
+    </section>
+
+    <!-- Insights -->
+    <section class="panel" data-panel="insights">
+      <h1>Insights</h1>
+      <p class="lede">How much you have spoken instead of typed.</p>
+      <div class="tiles" id="insightTiles"></div>
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">📊</span>
+          <div>
+            <h2>Where you dictate</h2>
+            <p>The apps your voice lands in most.</p>
+          </div>
+        </div>
+        <div class="bars" id="appBars"></div>
+      </div>
+    </section>
+
+    <!-- History -->
+    <section class="panel" data-panel="history">
       <h1>History</h1>
-      <p class="lede">Everything you have dictated, kept only on this device.</p>
-      <div class="card stats" id="historyStats"></div>
+      <p class="lede">Everything you have said, kept only on this device.</p>
       <input type="search" id="historySearch" placeholder="Search transcripts…" />
       <div class="history-list" id="historyList"></div>
     </section>
@@ -47,12 +113,19 @@
       <p class="lede">Speech becomes finished text wherever your caret is.</p>
 
       <div class="card">
-        <label class="field">
-          <span>Model</span>
+        <div class="card-head">
+          <span class="card-icon">🧠</span>
+          <div>
+            <h2>Recognition</h2>
+            <p>Which model turns your voice into text.</p>
+          </div>
+        </div>
+        <label class="row">
+          <span class="row-label">Model</span>
           <select data-key="stt.model" id="sttModel"></select>
         </label>
-        <label class="field">
-          <span>Language</span>
+        <label class="row">
+          <span class="row-label">Language</span>
           <select data-key="stt.language">
             <option value="auto">Detect automatically</option>
             <option value="en">English</option>
@@ -68,20 +141,45 @@
       </div>
 
       <div class="card">
-        <label class="toggle">
-          <input type="checkbox" data-key="dictation.polish" />
-          <span>Polish with AI <em>(cleanup always runs without it)</em></span>
+        <div class="card-head">
+          <span class="card-icon">✨</span>
+          <div>
+            <h2>Formatting</h2>
+            <p>What happens to your words before they land.</p>
+          </div>
+        </div>
+        <div class="switch-row">
+          <div><strong>Polish with AI</strong><span>Cleanup always runs without it</span></div>
+          <label class="switch"><input type="checkbox" data-key="dictation.polish" /><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div><strong>Remove filler words</strong><span>Drops um, uh, you know</span></div>
+          <label class="switch"><input type="checkbox" data-key="dictation.removeFillers" /><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div><strong>Add punctuation</strong><span>Commas, full stops, capitals</span></div>
+          <label class="switch"><input type="checkbox" data-key="dictation.autoPunctuate" /><span></span></label>
+        </div>
+        <label class="row">
+          <span class="row-label">Insert using</span>
+          <select data-key="dictation.insertMode">
+            <option value="paste">Paste — fastest</option>
+            <option value="natural">Type naturally — for editors that drop fast input</option>
+            <option value="type">Type at full speed</option>
+            <option value="clipboard-only">Clipboard only</option>
+          </select>
         </label>
-        <label class="toggle"><input type="checkbox" data-key="dictation.removeFillers" /><span>Remove filler words</span></label>
-        <label class="toggle"><input type="checkbox" data-key="dictation.autoPunctuate" /><span>Add punctuation</span></label>
       </div>
 
       <div class="card">
-        <h2>Custom vocabulary</h2>
-        <p class="note">
-          Names and jargon, one per line. Measured here: adding these took
-          <em>"Remind me to send Maya the deck"</em> from 78% to 100%.
-        </p>
+        <div class="card-head">
+          <span class="card-icon">📖</span>
+          <div>
+            <h2>Custom vocabulary</h2>
+            <p>Names and jargon, one per line. Measured here: these took
+               "Remind me to send Maya the deck" from 78% to 100%.</p>
+          </div>
+        </div>
         <textarea id="vocabulary" rows="4" placeholder="Sripad&#10;VoiceOS&#10;Hackatime"></textarea>
       </div>
     </section>
@@ -90,118 +188,170 @@
     <section class="panel" data-panel="agent">
       <h1>Agent</h1>
       <p class="lede">Say what you want done and VoiceOS does it in the right app.</p>
+
       <div class="card">
-        <label class="toggle"><input type="checkbox" data-key="agent.enabled" /><span>Enable Agent Mode</span></label>
-        <label class="toggle"><input type="checkbox" data-key="agent.screenContext" /><span>Let the agent see the screen</span></label>
-        <label class="toggle"><input type="checkbox" data-key="agent.webSearch" /><span>Allow web search</span></label>
-        <label class="toggle">
-          <input type="checkbox" data-key="agent.confirmBeforeActions" />
-          <span>Ask before anything is sent or changed</span>
-        </label>
+        <div class="card-head">
+          <span class="card-icon">✨</span>
+          <div>
+            <h2>Agent voice</h2>
+            <p>The voice used when Agent Mode answers you.</p>
+          </div>
+          <div class="head-controls">
+            <div class="segmented" id="speedSeg">
+              <button data-speed="0.85">Slow</button>
+              <button data-speed="1" class="is-on">Normal</button>
+              <button data-speed="1.2">Fast</button>
+            </div>
+            <label class="switch"><input type="checkbox" data-key="tts.speakAgentReplies" /><span></span></label>
+          </div>
+        </div>
+        <div class="voice-row">
+          <span class="voice-orb"></span>
+          <div class="voice-main">
+            <strong id="voiceName">Amy</strong>
+            <span id="voiceDesc">Warm and clear</span>
+          </div>
+          <select data-key="tts.voice" id="voiceSelect"></select>
+          <button class="btn-quiet" id="previewVoice">Preview</button>
+        </div>
       </div>
+
       <div class="card">
-        <label class="field">
-          <span>Brain</span>
+        <div class="card-head">
+          <span class="card-icon">👤</span>
+          <div>
+            <h2>About you</h2>
+            <p>Your name, and what Agent Mode remembers from your conversations.</p>
+          </div>
+        </div>
+        <div class="name-grid">
+          <input type="text" data-key="user.firstName" placeholder="First name" />
+          <input type="text" data-key="user.lastName" placeholder="Last name" />
+        </div>
+        <div class="memory-row">
+          <span>Memory</span>
+          <button class="btn-quiet" id="toggleMemory">Show</button>
+        </div>
+        <div class="memory-body" id="memoryBody" hidden></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">⚡</span>
+          <div>
+            <h2>Actions</h2>
+            <p>What Agent Mode is allowed to do.</p>
+          </div>
+        </div>
+        <div class="action-grid">
+          <div class="action">
+            <span class="action-icon">🖱</span>
+            <div><strong>Point and ask about your screen</strong><span>Reads whatever is on screen</span></div>
+            <label class="switch"><input type="checkbox" data-key="agent.screenContext" /><span></span></label>
+          </div>
+          <div class="action">
+            <span class="action-icon">🔍</span>
+            <div><strong>Search the web</strong><span>Looks things up with sources</span></div>
+            <label class="switch"><input type="checkbox" data-key="agent.webSearch" /><span></span></label>
+          </div>
+          <div class="action">
+            <span class="action-icon">✏️</span>
+            <div><strong>Edit selected text</strong><span>Rewrite or fix highlighted text</span></div>
+            <label class="switch"><input type="checkbox" data-key="agent.editSelection" /><span></span></label>
+          </div>
+          <div class="action">
+            <span class="action-icon">⏰</span>
+            <div><strong>Set reminders</strong><span>Remind you at a time you pick</span></div>
+            <label class="switch"><input type="checkbox" data-key="agent.reminders" /><span></span></label>
+          </div>
+        </div>
+        <div class="switch-row danger-row">
+          <div><strong>Ask before anything is sent or changed</strong><span>Strongly recommended</span></div>
+          <label class="switch"><input type="checkbox" data-key="agent.confirmBeforeActions" /><span></span></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">🧩</span>
+          <div>
+            <h2>Brain</h2>
+            <p>Which model reasons. Direct commands work without one.</p>
+          </div>
+        </div>
+        <label class="row">
+          <span class="row-label">Provider</span>
           <select data-key="llm.provider">
             <option value="ollama">Ollama — local, offline</option>
             <option value="groq">Groq — free tier</option>
             <option value="gemini">Google AI Studio — free tier</option>
           </select>
         </label>
-        <label class="field">
-          <span>Model</span>
-          <input type="text" data-key="llm.model" placeholder="qwen2.5:3b-instruct" />
+        <label class="row">
+          <span class="row-label">Model</span>
+          <input type="text" data-key="llm.agentModel" placeholder="qwen2.5:7b-instruct" />
         </label>
-        <div class="field" id="apiKeyRow" hidden>
-          <span>API key</span>
+        <div class="row" id="apiKeyRow" hidden>
+          <span class="row-label">API key</span>
           <input type="password" id="apiKey" placeholder="Paste a free key" autocomplete="off" />
-        </div>
-        <div class="actions" id="apiKeyActions" hidden>
-          <button class="btn" id="saveKey">Save key</button>
-          <span class="key-state" id="keyState"></span>
+          <button class="btn-quiet" id="saveKey">Save</button>
         </div>
         <p class="note" id="llmNote"></p>
       </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">🌐</span>
+          <div>
+            <h2>Browser</h2>
+            <p>Which Chrome profile automation drives.</p>
+          </div>
+        </div>
+        <label class="row">
+          <span class="row-label">Profile</span>
+          <select data-key="browser.profile">
+            <option value="voiceos">Separate VoiceOS profile</option>
+            <option value="system">My everyday Chrome</option>
+          </select>
+        </label>
+        <p class="note">
+          The separate profile leaves your own tabs and logins untouched. Using
+          your everyday profile means you are already signed in everywhere, but
+          Chrome must be closed before VoiceOS can drive it.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">🔒</span>
+          <div>
+            <h2>Privacy</h2>
+            <p>Speech, reasoning and actions all run on this machine.</p>
+          </div>
+        </div>
+        <div class="switch-row">
+          <div><strong>Save transcripts on this device</strong><span>Never leaves your computer</span></div>
+          <label class="switch"><input type="checkbox" data-key="privacy.saveTranscriptsOnDevice" /><span></span></label>
+        </div>
+        <div class="switch-row">
+          <div><strong>Private Mode</strong><span>No screen capture, nothing written to disk</span></div>
+          <label class="switch"><input type="checkbox" data-key="privacy.privateMode" /><span></span></label>
+        </div>
+        <div class="actions-row">
+          <button class="btn-quiet" data-open="userData">Open data folder</button>
+          <button class="btn-danger" id="clearData">Delete all transcripts</button>
+        </div>
+      </div>
     </section>
 
-    <!-- App Store -->
-    <section class="panel" data-panel="appstore">
-      <h1>App Store</h1>
+    <!-- Apps -->
+    <section class="panel" data-panel="apps">
+      <h1>Apps</h1>
       <p class="lede">Connect the apps you live in, then just say what you want done.</p>
       <div class="filters" id="appFilters"></div>
       <div id="appGrid"></div>
     </section>
 
-    <!-- Settings: shortcuts, privacy and diagnostics in one place. -->
-    <section class="panel" data-panel="settings">
-      <h1>Settings</h1>
-      <p class="lede">Shortcuts, privacy and where your data lives.</p>
-
-      <div class="card">
-        <h2>Shortcuts</h2>
-        <label class="field">
-          <span>Dictation</span>
-          <input type="text" data-key="hotkeys.dictationToggle" />
-        </label>
-        <label class="field">
-          <span>Agent</span>
-          <input type="text" data-key="hotkeys.agentToggle" />
-        </label>
-        <p class="note" id="fnNote"></p>
-      </div>
-
-      <div class="card">
-        <h2>Overlay</h2>
-        <label class="toggle"><input type="checkbox" data-key="ui.alwaysShowNotch" /><span>Keep the pill on screen while VoiceOS runs</span></label>
-        <label class="toggle"><input type="checkbox" data-key="ui.showHistoryRail" /><span>Show the history strip on the left edge</span></label>
-        <label class="field">
-          <span>Pill position</span>
-          <select data-key="ui.notchPosition">
-            <option value="bottom">Bottom of screen</option>
-            <option value="top">Top of screen</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="card">
-        <h2>Browser automation</h2>
-        <label class="field">
-          <span>Chrome profile</span>
-          <select data-key="browser.profile">
-            <option value="voiceos">Separate VoiceOS profile</option>
-            <option value="system">My everyday Chrome profile</option>
-          </select>
-        </label>
-        <p class="note">
-          The separate profile leaves your own tabs, cookies and logins untouched;
-          you sign in once per service. Using your everyday profile means you are
-          already signed in everywhere, but <em>Chrome must be closed</em> before
-          VoiceOS can drive it.
-        </p>
-      </div>
-
-      <div class="card">
-        <h2>Microphone</h2>
-        <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
-        <p class="note">Shows your live input level while dictating.</p>
-      </div>
-
-      <div class="card">
-        <h2>Privacy</h2>
-        <label class="toggle"><input type="checkbox" data-key="privacy.saveTranscriptsOnDevice" /><span>Save transcripts on this device</span></label>
-        <label class="toggle"><input type="checkbox" data-key="privacy.privateMode" /><span>Private Mode <em>(no screen capture, nothing written to disk)</em></span></label>
-        <p class="note">
-          Speech recognition and every action run on this machine. There is no
-          VoiceOS server, so there is nowhere for your audio to go.
-        </p>
-        <div class="actions">
-          <button class="btn-quiet btn" data-open="userData">Open data folder</button>
-          <button class="btn btn-danger" id="clearData">Delete all transcripts</button>
-        </div>
-      </div>
-
-      <div class="card" id="aboutCard"></div>
-    </section>
   </main>
 
   <script src="settings.js"></script>

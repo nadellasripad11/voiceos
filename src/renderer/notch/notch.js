@@ -29,8 +29,12 @@ const el = {
   found: document.getElementById('found'),
   foundList: document.getElementById('foundList'),
   confirm: document.getElementById('confirm'),
+  confirmApp: document.getElementById('confirmApp'),
   confirmTitle: document.getElementById('confirmTitle'),
-  confirmDetail: document.getElementById('confirmDetail'),
+  confirmRows: document.getElementById('confirmRows'),
+  confirmIcon: document.getElementById('confirmIcon'),
+  confirmGo: document.getElementById('confirmGo'),
+  confirmEdit: document.getElementById('confirmEdit'),
   actions: document.getElementById('actions'),
   meta: document.getElementById('meta')
 };
@@ -62,14 +66,58 @@ function clearBody() {
   el.answerText.textContent = '';
   el.found.hidden = true;
   el.foundList.innerHTML = '';
-  el.confirm.hidden = true;
   el.meta.textContent = '';
-  pendingConfirm = null;
   for (const c of el.actions.querySelectorAll('.chip')) {
     c.classList.remove('is-done');
     c.textContent = c.dataset.act === 'insert' ? 'Insert'
       : c.dataset.act === 'copy' ? 'Copy' : 'Ask again';
   }
+}
+
+/**
+ * Shows an approval request.
+ *
+ * Everything that will happen is spelled out as labelled rows, so the user is
+ * approving a specific message to a specific recipient rather than a vague
+ * "run this action".
+ */
+function showConfirm(confirm) {
+  pendingConfirm = confirm;
+  el.confirmApp.textContent = confirm.app || 'VoiceOS';
+  el.confirmTitle.textContent = confirm.title || 'Confirm this action?';
+  el.confirmGo.textContent = confirm.verb || 'Do it';
+  el.confirmEdit.hidden = !confirm.editable;
+
+  if (confirm.icon) {
+    el.confirmIcon.src = `../shared/icons/${confirm.icon}`;
+    el.confirmIcon.hidden = false;
+  } else {
+    el.confirmIcon.hidden = true;
+  }
+
+  el.confirmRows.innerHTML = '';
+  for (const [label, value] of Object.entries(confirm.rows || {})) {
+    if (!value) continue;
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    el.confirmRows.append(dt, dd);
+  }
+  // Free-text detail with no labelled rows still deserves to be shown.
+  if (!el.confirmRows.children.length && confirm.detail) {
+    const dd = document.createElement('dd');
+    dd.textContent = confirm.detail;
+    dd.style.gridColumn = '1 / -1';
+    el.confirmRows.appendChild(dd);
+  }
+
+  el.confirm.hidden = false;
+}
+
+function hideConfirm() {
+  el.confirm.hidden = true;
+  pendingConfirm = null;
 }
 
 function showAsked(text) {
@@ -149,32 +197,50 @@ const waveCtx = el.wave.getContext('2d');
 const BARS = 44;
 const levels = new Array(BARS).fill(0);
 
-function drawWave() {
+function drawWave(phase = 0) {
   const { width, height } = el.wave;
   waveCtx.clearRect(0, 0, width, height);
-  const bw = width / BARS;
-  const mid = height / 2;
 
-  for (let i = 0; i < BARS; i++) {
-    const level = levels[i];
-    const h = Math.max(3, level * height * 0.92);
-    const x = i * bw + bw * 0.26;
-    const w = bw * 0.48;
-    const alpha = 0.28 + level * 0.72;
-    waveCtx.fillStyle = `rgba(251, 66, 104, ${alpha.toFixed(3)})`;
-    roundRect(waveCtx, x, mid - h / 2, w, h, Math.min(w / 2, h / 2));
-    waveCtx.fill();
+  const mid = height / 2;
+  const grad = waveCtx.createLinearGradient(0, 0, width, 0);
+  grad.addColorStop(0.00, '#5e5ce6');
+  grad.addColorStop(0.28, '#64d2ff');
+  grad.addColorStop(0.55, '#ff6482');
+  grad.addColorStop(0.78, '#bf5af2');
+  grad.addColorStop(1.00, '#5e5ce6');
+
+  // Three offset strands give the ribbon depth without drawing three waveforms.
+  const strands = [
+    { amp: 1.0, speed: 1.0, alpha: 0.95, lw: 2.4 },
+    { amp: 0.62, speed: 1.6, alpha: 0.5, lw: 1.8 },
+    { amp: 0.38, speed: 2.3, alpha: 0.3, lw: 1.4 }
+  ];
+
+  for (const strand of strands) {
+    waveCtx.beginPath();
+    for (let x = 0; x <= width; x++) {
+      const t = x / width;
+      // Taper the ends so the ribbon fades out instead of cutting off.
+      const taper = Math.sin(Math.PI * t);
+      const level = sampleLevel(t);
+      const y = mid + Math.sin(t * Math.PI * 4 + phase * strand.speed)
+        * level * mid * 0.92 * strand.amp * taper;
+      if (x === 0) waveCtx.moveTo(x, y);
+      else waveCtx.lineTo(x, y);
+    }
+    waveCtx.strokeStyle = grad;
+    waveCtx.globalAlpha = strand.alpha;
+    waveCtx.lineWidth = strand.lw;
+    waveCtx.lineCap = 'round';
+    waveCtx.stroke();
   }
+  waveCtx.globalAlpha = 1;
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+/** Reads the smoothed level history at a position along the ribbon. */
+function sampleLevel(t) {
+  const i = Math.min(levels.length - 1, Math.max(0, Math.round(t * (levels.length - 1))));
+  return Math.max(0.04, levels[i]);
 }
 
 const BAR_INTERVAL_MS = 85;   // ~12 new bars a second
@@ -200,7 +266,7 @@ function animate(now = performance.now()) {
     levels.shift();
   }
 
-  drawWave();
+  drawWave(now / 420);
   capture.rafHandle = requestAnimationFrame(animate);
 }
 
@@ -397,8 +463,14 @@ window.voiceos.onSessionIdle(({ hotkeys, position } = {}) => {
   clearBody();
   currentResult = null;
   el.timer.textContent = '';
-  const key = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift+Space';
-  setState('idle', { label: 'VoiceOS', hint: `Press ${prettyKey(key)} to dictate` });
+  const dictate = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift+Space';
+  const agent = hotkeys && hotkeys.agent;
+  setState('idle', {
+    label: 'VoiceOS',
+    hint: agent
+      ? `${prettyKey(dictate)} dictate · ${prettyKey(agent)} ask`
+      : `Press ${prettyKey(dictate)} to dictate`
+  });
 });
 
 window.voiceos.onSessionStart(({ mode, config, position }) => {
@@ -454,14 +526,12 @@ window.voiceos.onAgentResult((payload) => {
   showAnswer(payload.answer);
   showFound(payload.found || []);
 
-  if (payload.confirm) {
-    pendingConfirm = payload.confirm;
-    el.confirmTitle.textContent = payload.confirm.title || 'Confirm this action';
-    el.confirmDetail.textContent = payload.confirm.detail || '';
-    el.confirm.hidden = false;
-  }
+  if (payload.confirm) showConfirm(payload.confirm);
+  else hideConfirm();
   el.meta.textContent = [payload.ms && `${payload.ms}ms`, payload.model].filter(Boolean).join(' · ');
 });
+
+window.voiceos.onAgentConfirm((confirm) => showConfirm(confirm));
 
 window.voiceos.onSessionError(({ message, detail }) => fail(message, detail));
 
@@ -507,17 +577,31 @@ function markDone(btn, label) {
 el.confirm.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-act]');
   if (!btn || !pendingConfirm) return;
-  const approved = btn.dataset.act === 'approve';
-  el.confirm.hidden = true;
-  await window.voiceos.resolveConfirm({ id: pendingConfirm.id, approved });
-  pendingConfirm = null;
-  if (!approved) el.meta.textContent = 'Cancelled';
+  const act = btn.dataset.act;
+  const id = pendingConfirm.id;
+  hideConfirm();
+
+  if (act === 'edit') {
+    // Editing hands the draft back rather than sending it.
+    await window.voiceos.resolveConfirm({ id, approved: false, edit: true });
+    el.meta.textContent = 'Opened for editing';
+    return;
+  }
+  await window.voiceos.resolveConfirm({ id, approved: act === 'approve' });
+  el.meta.textContent = act === 'approve' ? 'Sent' : 'Cancelled';
 });
 
 el.close.addEventListener('click', () => window.voiceos.cancel());
 
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') window.voiceos.cancel();
+  if (e.key !== 'Escape') return;
+  if (pendingConfirm) {
+    const id = pendingConfirm.id;
+    hideConfirm();
+    window.voiceos.resolveConfirm({ id, approved: false });
+    return;
+  }
+  window.voiceos.cancel();
 });
 
 // --- Pointer passthrough --------------------------------------------------
@@ -531,12 +615,14 @@ function setInteractive(next) {
   window.voiceos.setInteractive(next);
 }
 
+function within(node, x, y) {
+  if (!node || node.hidden) return false;
+  const r = node.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+
 window.addEventListener('mousemove', (e) => {
-  const r = el.card.getBoundingClientRect();
-  setInteractive(
-    e.clientX >= r.left && e.clientX <= r.right &&
-    e.clientY >= r.top && e.clientY <= r.bottom
-  );
+  setInteractive(within(el.card, e.clientX, e.clientY) || within(el.confirm, e.clientX, e.clientY));
 });
 window.addEventListener('mouseleave', () => setInteractive(false));
 

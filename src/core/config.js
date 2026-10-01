@@ -92,6 +92,8 @@ const DEFAULTS = {
     webSearch: true,
     confirmBeforeActions: true,   // never send/change anything unreviewed
     autoConfirmReadOnly: true,
+    editSelection: true,
+    reminders: true,
     rememberConversation: true,
     maxHistoryTurns: 8
   },
@@ -124,6 +126,11 @@ const DEFAULTS = {
     // running Chrome cannot be given a debugging port after the fact.
     profile: 'voiceos',
     headless: false
+  },
+
+  user: {
+    firstName: '',
+    lastName: ''
   },
 
   apps: {

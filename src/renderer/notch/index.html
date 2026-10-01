@@ -55,20 +55,6 @@
           <ul class="found-list" id="foundList"></ul>
         </div>
 
-        <div class="confirm" id="confirm" hidden>
-          <div class="confirm-head">
-            <span class="confirm-icon" aria-hidden="true">!</span>
-            <div>
-              <strong id="confirmTitle"></strong>
-              <p id="confirmDetail"></p>
-            </div>
-          </div>
-          <div class="confirm-actions">
-            <button class="btn btn-quiet" data-act="cancel">Cancel</button>
-            <button class="btn btn-go" data-act="approve" id="confirmGo">Do it</button>
-          </div>
-        </div>
-
         <div class="actions" id="actions">
           <button class="chip" data-act="insert">Insert</button>
           <button class="chip" data-act="copy">Copy</button>
@@ -78,6 +64,30 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- Approval card. Floats below the island, pointing at it. -->
+    <div class="sheet" id="confirm" hidden>
+      <span class="sheet-arrow" aria-hidden="true"></span>
+      <div class="sheet-inner">
+        <img class="sheet-icon" id="confirmIcon" alt="" hidden />
+        <span class="sheet-glyph" id="confirmGlyph">!</span>
+
+        <div class="sheet-main">
+          <div class="sheet-app" id="confirmApp"></div>
+          <div class="sheet-title" id="confirmTitle"></div>
+          <dl class="sheet-rows" id="confirmRows"></dl>
+        </div>
+
+        <div class="sheet-actions">
+          <button class="sheet-btn sheet-go" data-act="approve" id="confirmGo">Send</button>
+          <button class="sheet-btn sheet-alt" data-act="edit" id="confirmEdit">Edit</button>
+        </div>
+
+        <button class="sheet-close" data-act="cancel" aria-label="Cancel">
+          <svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/></svg>
+        </button>
+      </div>
     </div>
   </div>
 

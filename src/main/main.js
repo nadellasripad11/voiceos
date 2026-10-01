@@ -274,6 +274,7 @@ function createNotch() {
   // at whatever is underneath. forward: true still delivers mouse movement to
   // the renderer, which asks for input only while the pointer is on the pill.
   win.setIgnoreMouseEvents(true, { forward: true });
+  pipeConsole(win, 'notch');
   win.loadFile(path.join(__dirname, '..', 'renderer', 'notch', 'index.html'));
 
   win.on('closed', () => { windows.notch = null; });
@@ -369,6 +370,7 @@ function createRail() {
   // forward: true keeps delivering mouse movement to the renderer while clicks
   // pass through, which is what lets the strip notice the pointer.
   win.setIgnoreMouseEvents(true, { forward: true });
+  pipeConsole(win, 'rail');
   win.loadFile(path.join(__dirname, '..', 'renderer', 'rail', 'index.html'));
 
   win.on('closed', () => { windows.rail = null; });
@@ -403,6 +405,7 @@ function createOnboarding() {
       autoplayPolicy: 'no-user-gesture-required'
     }
   });
+  pipeConsole(win, 'onboarding');
   win.loadFile(path.join(__dirname, '..', 'renderer', 'onboarding', 'index.html'));
   win.on('closed', () => { windows.onboarding = null; });
   windows.onboarding = win;
@@ -429,10 +432,30 @@ function createSettings() {
       nodeIntegration: false
     }
   });
+  pipeConsole(win, 'settings');
   win.loadFile(path.join(__dirname, '..', 'renderer', 'settings', 'index.html'));
   win.on('closed', () => { windows.settings = null; });
   windows.settings = win;
   return win;
+}
+
+/**
+ * Surfaces renderer errors in the main log.
+ *
+ * Without this a thrown error in a renderer is invisible unless DevTools is
+ * open, which is how an empty Dashboard looked like a layout problem rather
+ * than an exception.
+ */
+function pipeConsole(win, name) {
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level >= 2) {
+      logger.error(`[${name}] ${message} (${String(sourceId).split('/').pop()}:${line})`);
+    } else if (isDev && level === 1) {
+      logger.debug(`[${name}] ${message}`);
+    }
+  });
+  win.webContents.on('render-process-gone', (_e, details) =>
+    logger.error(`[${name}] render process gone: ${details.reason}`));
 }
 
 function broadcast(channel, payload) {
@@ -671,6 +694,7 @@ function registerIpc() {
         configured: config.get('llm.model')
       },
       bridge: { available: services.bridge.available, running: Boolean(services.bridge.proc) },
+      tts: services.tts.status(),
       hotkeys: activeHotkeys,
       paths: { userData: paths.userData, models: paths.models, logs: paths.logs }
     };
@@ -721,6 +745,14 @@ function registerIpc() {
     const target = { userData: paths.userData, models: paths.models, logs: paths.logs }[which];
     if (!target) throw new Error(`Unknown path '${which}'`);
     return shell.openPath(target);
+  });
+
+  ipcMain.handle('voiceos:preview-voice', async (_e, text) => {
+    const audio = await services.tts.synthesizeBase64(String(text || 'This is how I will sound.'), {
+      speed: config.get('tts.speed', 1)
+    });
+    broadcast('speak', { data: audio.data, voice: audio.voice });
+    return { ok: true };
   });
 
   ipcMain.handle('voiceos:open-settings', () => { createSettings(); return { ok: true }; });
@@ -930,9 +962,17 @@ function buildTray() {
 // --- Lifecycle ------------------------------------------------------------
 
 if (!app.requestSingleInstanceLock()) {
+  // Another copy already holds the hotkeys. Exiting quietly here is what made
+  // a stale build look like "the shortcuts stopped working": the new code never
+  // ran and the old one kept responding.
+  console.log('VoiceOS is already running. Bringing the existing window forward.');
+  console.log('If you just rebuilt, quit it from the tray first, or run: npm run restart');
   app.quit();
 } else {
-  app.on('second-instance', () => createSettings());
+  app.on('second-instance', () => {
+    logger.info('second instance launched; focusing the existing window');
+    createSettings();
+  });
 
   app.whenReady().then(async () => {
     await initServices();

@@ -53,7 +53,10 @@
 
     const config = {
       onboarded: true,
-      hotkeys: { dictationToggle: 'Control+Alt+Space', agentToggle: 'Control+Alt+A', editToggle: 'Control+Alt+E' },
+      hotkeys: { dictationToggle: 'Control+Shift+Space', agentToggle: 'Control+Alt+Space', editToggle: 'Control+Shift+E' },
+      user: { firstName: 'Sripad', lastName: '' },
+      tts: { enabled: true, voice: 'en_US-amy-medium', speed: 1, speakAgentReplies: true },
+      browser: { profile: 'voiceos' },
       stt: { model: 'ggml-tiny.en-q5_1.bin', language: 'auto', beamSize: 1 },
       llm: { provider: 'ollama', model: 'qwen2.5:3b-instruct', agentModel: 'qwen2.5:7b-instruct' },
       dictation: {
@@ -78,10 +81,14 @@
       setConfig: async () => config,
       setValue: async () => config,
       resetConfig: async () => config,
+      previewVoice: async () => {},
+      onSpeak: () => () => {},
       status: async () => ({
         version: '0.1.0',
         platform: 'win32',
         stt: { ready: true, model: 'C:/models/ggml-tiny.en-q5_1.bin', threads: 7, problems: [] },
+        tts: { ready: true, voice: 'en_US-amy-medium', voices: ['en_US-amy-medium', 'en_US-ryan-high'] },
+        hotkeys: { dictation: 'Control+Shift+Space', agent: 'Control+Alt+A', edit: 'Control+Shift+E' },
         llm: { provider: 'ollama', available: false, models: [], configured: 'qwen2.5:3b-instruct' },
         bridge: { available: true, running: true },
         paths: { userData: 'C:/Users/you/AppData/Roaming/VoiceOS', models: 'models', logs: 'logs' }

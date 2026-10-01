@@ -9,12 +9,13 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev",
+    "dev": "node scripts/restart.js --dev",
     "setup": "node scripts/setup.js",
     "setup:models": "node scripts/fetch-models.js",
     "doctor": "node scripts/doctor.js",
     "site": "node website/serve.js",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "restart": "node scripts/restart.js"
   },
   "dependencies": {},
   "optionalDependencies": {

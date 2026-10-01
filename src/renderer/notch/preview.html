@@ -59,10 +59,10 @@
 
     function clearBody() {
       const d = doc();
+      d.getElementById('confirm').hidden = true;
       d.getElementById('asked').classList.remove('has-content');
       d.getElementById('answer').classList.remove('has-content');
       d.getElementById('found').hidden = true;
-      d.getElementById('confirm').hidden = true;
       d.getElementById('foundList').innerHTML = '';
       d.getElementById('meta').textContent = '';
     }
@@ -183,15 +183,30 @@
         doc().getElementById('meta').textContent = '2.1s · qwen2.5:7b-instruct';
       },
       confirm() {
-        SCENES.agent();
+        SCENES.dictation();
         const d = doc();
-        d.getElementById('confirmTitle').textContent = 'Send this email to David?';
-        d.getElementById('confirmDetail').textContent =
-          'To: david@company.com — "Project update: the migration is still blocked on the auth rewrite…"';
+        d.getElementById('label').textContent = 'Agent';
+        d.getElementById('hint').textContent = '';
+        setAnswer('I drafted the follow-up and it is ready to send.');
+        d.getElementById('confirmApp').textContent = 'Gmail';
+        d.getElementById('confirmTitle').textContent = 'Send this message?';
+        d.getElementById('confirmGo').textContent = 'Send';
+        d.getElementById('confirmEdit').hidden = false;
+        const icon = d.getElementById('confirmIcon');
+        icon.src = '../shared/icons/gmail.webp';
+        icon.hidden = false;
+        const rows = d.getElementById('confirmRows');
+        rows.innerHTML = '';
+        for (const [k, v] of [
+          ['To:', 'hello@voiceos.com'],
+          ['Subject:', 'Meeting tomorrow'],
+          ['Message:', 'Hey team, just wanted to follow up on our meeting tomorrow…']
+        ]) {
+          const dt = d.createElement('dt'); dt.textContent = k;
+          const dd = d.createElement('dd'); dd.textContent = v;
+          rows.append(dt, dd);
+        }
         d.getElementById('confirm').hidden = false;
-        d.getElementById('asked').classList.remove('has-content');
-        setFound([]);
-        setAnswer('I drafted the update and it is ready to send.');
       },
       error() {
         clearBody(); wave(false);
