@@ -9,64 +9,47 @@
 </head>
 <body>
   <!--
-    The notch. One surface that grows through four states:
-      idle       a quiet pill naming the shortcut
-      listening  live waveform while you speak
-      thinking   the transcript, while the agent works
-      answer     what it found and what it says back
-    It is click-through except over the card itself.
+    The island. Fused to the top bezel, square where it meets the edge and
+    rounded only below. At rest it is a small lozenge showing a level meter;
+    speaking expands it; an answer expands it further into a reading panel.
   -->
   <div class="stage" id="stage" data-state="idle">
     <div class="card" id="card">
 
-      <!-- Always-visible top line -->
+      <!-- Resting and listening: a single line -->
       <div class="bar">
-        <span class="dot" id="dot"></span>
-
-        <div class="bar-main">
-          <span class="label" id="label">VoiceOS</span>
-          <span class="hint" id="hint">Press Ctrl + Shift + Space to dictate</span>
-        </div>
-
-        <canvas id="wave" class="wave" width="880" height="56" aria-hidden="true"></canvas>
-
+        <canvas id="wave" class="wave" width="560" height="44" aria-hidden="true"></canvas>
+        <span class="hint" id="hint"></span>
         <span class="timer" id="timer"></span>
-        <button class="close" id="close" title="Dismiss (Esc)" aria-label="Dismiss">
-          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
-            <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/>
-          </svg>
-        </button>
       </div>
 
-      <!-- Everything below only exists once there is something to show -->
+      <!-- Answer -->
       <div class="body" id="body">
-        <div class="asked" id="asked">
-          <span class="eyebrow">You said</span>
-          <p class="asked-text" id="askedText"></p>
+        <div class="head">
+          <span class="orb" id="orb" aria-hidden="true"></span>
+          <button class="close" id="close" title="Dismiss (Esc)" aria-label="Dismiss">
+            <svg viewBox="0 0 12 12" width="11" height="11">
+              <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+            </svg>
+          </button>
         </div>
 
-        <div class="answer" id="answer">
-          <span class="eyebrow">Answer</span>
-          <div class="answer-text" id="answerText"></div>
-        </div>
+        <p class="asked" id="askedText"></p>
+        <div class="answer" id="answerText"></div>
 
-        <div class="found" id="found" hidden>
-          <span class="eyebrow">Found</span>
-          <ul class="found-list" id="foundList"></ul>
-        </div>
+        <ul class="found" id="foundList" hidden></ul>
 
-        <div class="actions" id="actions">
-          <button class="chip" data-act="insert">Insert</button>
-          <button class="chip" data-act="copy">Copy</button>
-          <button class="chip" data-act="again">Ask again</button>
-          <span class="spacer"></span>
+        <div class="foot">
+          <span class="foot-hint">
+            Type or hold <kbd id="kbdA">ctrl</kbd> <kbd id="kbdB">shift</kbd> to speak
+          </span>
           <span class="meta" id="meta"></span>
         </div>
       </div>
 
     </div>
 
-    <!-- Approval card. Floats below the island, pointing at it. -->
+    <!-- Approval. Floats below the island, pointing at it. -->
     <div class="sheet" id="confirm" hidden>
       <span class="sheet-arrow" aria-hidden="true"></span>
       <div class="sheet-inner">
@@ -85,7 +68,9 @@
         </div>
 
         <button class="sheet-close" data-act="cancel" aria-label="Cancel">
-          <svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/></svg>
+          <svg viewBox="0 0 12 12" width="11" height="11">
+            <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+          </svg>
         </button>
       </div>
     </div>

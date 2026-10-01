@@ -60,10 +60,10 @@
     function clearBody() {
       const d = doc();
       d.getElementById('confirm').hidden = true;
-      d.getElementById('asked').classList.remove('has-content');
-      d.getElementById('answer').classList.remove('has-content');
-      d.getElementById('found').hidden = true;
+      d.getElementById('askedText').textContent = '';
+      d.getElementById('answerText').innerHTML = '';
       d.getElementById('foundList').innerHTML = '';
+      d.getElementById('foundList').hidden = true;
       d.getElementById('meta').textContent = '';
     }
 
@@ -76,13 +76,10 @@
         p.textContent = para.trim();
         box.appendChild(p);
       }
-      d.getElementById('answer').classList.add('has-content');
     }
 
     function setAsked(text) {
-      const d = doc();
-      d.getElementById('askedText').textContent = text;
-      d.getElementById('asked').classList.add('has-content');
+      doc().getElementById('askedText').textContent = text || '';
     }
 
     function setFound(items) {
@@ -93,17 +90,17 @@
         const li = d.createElement('li');
         li.className = 'found-item';
         li.innerHTML = it.icon
-          ? `<img class="found-icon" src="../shared/icons/${it.icon}" alt="" />`
-          : `<span class="found-glyph">${it.glyph || '•'}</span>`;
+          ? '<img class="found-icon" src="../shared/icons/' + it.icon + '" alt="" />'
+          : '<span class="found-glyph">' + (it.glyph || '*') + '</span>';
         const main = d.createElement('div');
         main.className = 'found-main';
-        main.innerHTML = `<div class="found-title"></div><div class="found-sub"></div>`;
-        main.querySelector('.found-title').textContent = it.title;
-        main.querySelector('.found-sub').textContent = it.subtitle || '';
+        const t = d.createElement('div'); t.className = 'found-title'; t.textContent = it.title;
+        const sub = d.createElement('div'); sub.className = 'found-sub'; sub.textContent = it.subtitle || '';
+        main.append(t, sub);
         li.appendChild(main);
         list.appendChild(li);
       }
-      d.getElementById('found').hidden = items.length === 0;
+      list.hidden = items.length === 0;
     }
 
     function wave(active) {
@@ -111,76 +108,76 @@
       const d = doc();
       const canvas = d.getElementById('wave');
       const ctx = canvas.getContext('2d');
-      const BARS = 44;
-      const levels = new Array(BARS).fill(0);
+      const N = 44;
+      const levels = new Array(N).fill(0.05);
+      let phase = 0;
       waveTimer = setInterval(() => {
-        levels.push(active ? Math.random() * 0.8 + 0.12 : 0.04);
+        phase += 0.22;
+        levels.push(active ? Math.random() * 0.7 + 0.15 : 0.05);
         levels.shift();
         const { width, height } = canvas;
         ctx.clearRect(0, 0, width, height);
-        const bw = width / BARS, mid = height / 2;
-        for (let i = 0; i < BARS; i++) {
-          const h = Math.max(3, levels[i] * height * 0.92);
-          const x = i * bw + bw * 0.26, w = bw * 0.48;
-          const r = Math.min(w / 2, h / 2);
-          ctx.fillStyle = `rgba(251,66,104,${(0.28 + levels[i] * 0.72).toFixed(3)})`;
+        const mid = height / 2;
+        const g = ctx.createLinearGradient(0, 0, width, 0);
+        g.addColorStop(0, '#5e5ce6'); g.addColorStop(0.28, '#64d2ff');
+        g.addColorStop(0.55, '#ff6482'); g.addColorStop(0.78, '#bf5af2');
+        g.addColorStop(1, '#5e5ce6');
+        for (const st of [{a:1,s:1,o:0.95,w:2.4},{a:0.62,s:1.6,o:0.5,w:1.8},{a:0.38,s:2.3,o:0.3,w:1.4}]) {
           ctx.beginPath();
-          ctx.moveTo(x + r, mid - h / 2);
-          ctx.arcTo(x + w, mid - h / 2, x + w, mid + h / 2, r);
-          ctx.arcTo(x + w, mid + h / 2, x, mid + h / 2, r);
-          ctx.arcTo(x, mid + h / 2, x, mid - h / 2, r);
-          ctx.arcTo(x, mid - h / 2, x + w, mid - h / 2, r);
-          ctx.closePath(); ctx.fill();
+          for (let x = 0; x <= width; x++) {
+            const t = x / width;
+            const taper = Math.sin(Math.PI * t);
+            const lv = levels[Math.round(t * (N - 1))];
+            const y = mid + Math.sin(t * Math.PI * 4 + phase * st.s) * lv * mid * 0.92 * st.a * taper;
+            x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = g; ctx.globalAlpha = st.o; ctx.lineWidth = st.w; ctx.lineCap = 'round';
+          ctx.stroke();
         }
+        ctx.globalAlpha = 1;
       }, 70);
     }
 
     const SCENES = {
       idle() {
         clearBody(); wave(false);
-        doc().getElementById('label').textContent = 'VoiceOS';
-        doc().getElementById('hint').textContent = 'Press Ctrl + Shift + Space to dictate';
+        doc().getElementById('hint').textContent = '';
         doc().getElementById('timer').textContent = '';
         setState('idle');
       },
       listening() {
         clearBody(); wave(true);
-        doc().getElementById('label').textContent = 'Agent';
         doc().getElementById('hint').textContent = 'Listening…';
         doc().getElementById('timer').textContent = '2.4s';
         setState('listening');
       },
       thinking() {
         clearBody(); wave(false);
-        doc().getElementById('label').textContent = 'Agent';
         doc().getElementById('hint').textContent = 'Thinking…';
         doc().getElementById('timer').textContent = '';
         setState('thinking');
-        setAsked('What do I have due this week in Canvas?');
       },
       dictation() {
         clearBody(); wave(false);
-        doc().getElementById('label').textContent = 'Dictation';
-        doc().getElementById('hint').textContent = 'Inserted';
-        doc().getElementById('timer').textContent = '';
-        setState('answer');
-        setAnswer('Send David the project update tomorrow, and ask whether the migration is still blocked.');
-        doc().getElementById('meta').textContent = '1638ms · ggml-tiny.en-q5_1.bin · chrome';
-      },
-      agent() {
-        clearBody(); wave(false);
-        doc().getElementById('label').textContent = 'Agent';
         doc().getElementById('hint').textContent = '';
         doc().getElementById('timer').textContent = '';
         setState('answer');
-        setAsked('What do I have due this week?');
-        setAnswer('You have three things due before Friday.\n\nThe Physics lab report is the closest — it is due tomorrow at 11:59pm and has not been submitted yet. The other two are later in the week and both accept late work.');
+        setAsked('');
+        setAnswer('Send David the project update tomorrow, and ask whether the migration is still blocked.');
+        doc().getElementById('meta').textContent = '1638ms';
+      },
+      agent() {
+        clearBody(); wave(false);
+        doc().getElementById('hint').textContent = '';
+        doc().getElementById('timer').textContent = '';
+        setState('answer');
+        setAsked('Jarvis, what did I miss today?');
+        setAnswer('You missed your package delivery, two scheduled meetings, and three assignments are due before Friday.');
         setFound([
-          { icon: 'canvas.webp', title: 'Lab Report 4 — Physics 1112', subtitle: 'Due tomorrow, 11:59 PM · not submitted' },
-          { icon: 'canvas.webp', title: 'Problem Set 7 — Calculus II', subtitle: 'Due Thursday · accepts late work' },
-          { glyph: '🎒', title: 'Reading response — History 2110', subtitle: 'Due Friday · Google Classroom' }
+          { icon: 'canvas.webp', title: 'Lab Report 4 — Physics 1112', subtitle: 'Due tomorrow, 11:59 PM' },
+          { glyph: '📅', title: 'Two meetings', subtitle: 'Google Calendar' }
         ]);
-        doc().getElementById('meta').textContent = '2.1s · qwen2.5:7b-instruct';
+        doc().getElementById('meta').textContent = '2.1s';
       },
       confirm() {
         SCENES.dictation();
@@ -210,11 +207,10 @@
       },
       error() {
         clearBody(); wave(false);
-        doc().getElementById('label').textContent = 'Microphone unavailable';
         doc().getElementById('hint').textContent = '';
-        doc().getElementById('timer').textContent = '';
         setState('error');
-        setAnswer('Permission was denied. Allow it in Windows Settings › Privacy › Microphone.');
+        setAsked('');
+        setAnswer('Permission was denied. Allow the microphone in Windows Settings.');
       }
     };
 

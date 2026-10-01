@@ -1,25 +1,24 @@
 /**
- * The notch.
+ * The island.
  *
- * Modelled on the Dynamic Island: a near-black surface fused to the top edge of
- * the display, square where it meets the bezel and rounded only along the
- * bottom, so it reads as part of the screen rather than a window floating over
- * it. It grows from a small pill into a full answer panel.
+ * A near-black surface fused to the top bezel: square where it meets the edge,
+ * rounded only along the bottom, so it reads as part of the display rather than
+ * a window floating over it.
  *
- * It is deliberately dark rather than glass. The rest of the app is light, but
- * this sits over arbitrary content at the screen edge, and a solid dark slab is
- * the only treatment that stays legible against anything behind it.
+ * Deliberately dark while the rest of the app is light. This sits over whatever
+ * the user is working in, and a solid dark slab is the only treatment that
+ * stays legible against arbitrary content behind it.
  */
 @import url("../shared/tokens.css");
 
 :root {
-  --island: #08080a;
+  --island: #000;
   --island-raised: rgba(255, 255, 255, 0.07);
-  --island-edge: rgba(255, 255, 255, 0.09);
+  --island-edge: rgba(255, 255, 255, 0.08);
   --island-text: #f5f5f7;
-  --island-dim: rgba(245, 245, 247, 0.62);
-  --island-faint: rgba(245, 245, 247, 0.38);
-  --island-radius: 26px;
+  --island-dim: rgba(245, 245, 247, 0.6);
+  --island-faint: rgba(245, 245, 247, 0.34);
+  --radius: 28px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -32,17 +31,17 @@ html, body {
   font-family: var(--font);
   color: var(--island-text);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
   -webkit-user-select: none;
   user-select: none;
   cursor: default;
 }
 
-/* No padding at the top: the card has to touch y=0 or the illusion breaks. */
+/* No top padding: the card has to touch y=0 or the illusion breaks. */
 .stage {
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
   width: 100%;
   height: 100%;
   padding: 0 0 28px;
@@ -50,107 +49,43 @@ html, body {
 
 /* --- the island --- */
 .card {
-  width: 100%;
-  max-width: 580px;
+  flex-shrink: 0;
   overflow: hidden;
-
   background: var(--island);
-  /* Square against the bezel, rounded where it leaves the screen edge. */
-  border-radius: 0 0 var(--island-radius) var(--island-radius);
-  box-shadow:
-    0 14px 38px rgba(0, 0, 0, 0.46),
-    0 2px 10px rgba(0, 0, 0, 0.3);
-
-  transition:
-    max-width 300ms cubic-bezier(0.32, 0.72, 0, 1),
-    border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1);
-  animation: emerge 280ms cubic-bezier(0.32, 0.72, 0, 1);
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.35);
+  transition: width 340ms cubic-bezier(0.32, 0.72, 0, 1);
+  animation: emerge 300ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Grows downward out of the bezel rather than fading in. */
 @keyframes emerge {
-  from { transform: translateY(-14px); opacity: 0; }
+  from { transform: translateY(-16px); opacity: 0; }
   to   { transform: none; opacity: 1; }
 }
 
-/* At rest it contracts to a small lozenge, like the island with nothing in it. */
-[data-state="idle"] .card {
-  max-width: max-content;
-  border-radius: 0 0 20px 20px;
-  opacity: 0.92;
-}
-[data-state="idle"] .card:hover {
-  opacity: 1;
-  border-radius: 0 0 24px 24px;
-  transform: scale(1.06);
-  transform-origin: top center;
-  box-shadow:
-    0 18px 44px rgba(0, 0, 0, 0.52),
-    0 3px 12px rgba(0, 0, 0, 0.34);
-}
-[data-state="idle"] .card {
-  transform-origin: top center;
-  transition:
-    max-width 300ms cubic-bezier(0.32, 0.72, 0, 1),
-    border-radius 300ms cubic-bezier(0.32, 0.72, 0, 1),
-    transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
-    box-shadow 260ms ease,
-    opacity 200ms ease;
-}
-[data-state="idle"] .card:hover .bar { padding: 10px 22px 11px; }
-[data-state="idle"] .bar { transition: padding 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+/* Resting: a small lozenge holding just the level meter. */
+[data-state="idle"] .card { width: 168px; }
+[data-state="listening"] .card,
+[data-state="transcribing"] .card,
+[data-state="thinking"] .card { width: 380px; }
+[data-state="answer"] .card,
+[data-state="error"] .card { width: 560px; }
 
-/* Docked to the bottom edge instead: the rounding flips so the flat side is
-   always the one fused to the bezel. */
-[data-position="bottom"] .stage { align-items: flex-end; padding: 28px 0 0; }
-[data-position="bottom"] .card { border-radius: var(--island-radius) var(--island-radius) 0 0; }
-[data-position="bottom"][data-state="idle"] .card { border-radius: 20px 20px 0 0; }
-[data-position="bottom"] .card { animation-name: emerge-up; }
-@keyframes emerge-up {
-  from { transform: translateY(14px); opacity: 0; }
-  to   { transform: none; opacity: 1; }
-}
+/* Hovering swells it, the way the Dynamic Island does when reached for. */
+[data-state="idle"] .card:hover { width: 208px; }
 
-/* --- top bar --- */
+/* --- the single line --- */
 .bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 11px 20px 12px;
-  min-height: 44px;
+  height: 46px;
+  padding: 0 22px;
 }
-[data-state="idle"] .bar { padding: 8px 18px 9px; min-height: 0; }
+[data-state="answer"] .bar,
+[data-state="error"] .bar { display: none; }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  flex-shrink: 0;
-  border-radius: var(--r-pill);
-  background: var(--island-faint);
-  transition: background 180ms ease;
-}
-[data-state="listening"] .dot { background: var(--accent); animation: breathe 1.6s ease-in-out infinite; }
-[data-state="transcribing"] .dot,
-[data-state="thinking"] .dot,
-[data-state="polishing"] .dot,
-[data-state="inserting"] .dot { background: var(--island-dim); animation: breathe 1s ease-in-out infinite; }
-[data-state="answer"] .dot { background: #30d158; }
-[data-state="error"] .dot { background: #ff453a; }
-
-@keyframes breathe {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(251, 66, 104, 0.4); transform: scale(1); }
-  50%      { box-shadow: 0 0 0 7px rgba(251, 66, 104, 0); transform: scale(1.2); }
-}
-
-.bar-main { display: flex; align-items: baseline; gap: 9px; min-width: 0; flex: 1; }
-
-.label {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.012em;
-  white-space: nowrap;
-  color: var(--island-text);
-}
+.wave { display: block; flex: 1; min-width: 0; height: 26px; }
 
 .hint {
   font-size: 12.5px;
@@ -159,90 +94,83 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.wave { display: none; width: 200px; height: 26px; flex-shrink: 0; }
-[data-state="listening"] .wave { display: block; }
-[data-state="listening"] .hint { display: none; }
+.hint:empty { display: none; }
+[data-state="idle"] .hint { display: none; }
 
 .timer {
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  color: var(--island-dim);
+  color: var(--island-faint);
   flex-shrink: 0;
 }
 .timer:empty { display: none; }
 
+/* --- answer --- */
+.body { display: none; padding: 20px 26px 18px; }
+[data-state="answer"] .body,
+[data-state="error"] .body { display: block; }
+
+.head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+
+/* A small iridescent orb, the way the real product marks a spoken reply. */
+.orb {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, #a0e9ff 0%, #4aa8ff 38%, #2d6fd8 62%, #1b3f8f 100%);
+  box-shadow: 0 0 16px rgba(74, 168, 255, 0.45), inset 0 1px 2px rgba(255, 255, 255, 0.6);
+}
+[data-state="error"] .orb {
+  background: radial-gradient(circle at 34% 30%, #ffb3ad 0%, #ff6b5e 45%, #c2342a 100%);
+  box-shadow: 0 0 16px rgba(255, 107, 94, 0.4);
+}
+
 .close {
-  display: none;
+  display: grid;
   place-items: center;
   width: 22px;
   height: 22px;
-  flex-shrink: 0;
   color: var(--island-faint);
   background: transparent;
   border: none;
   border-radius: var(--r-pill);
   cursor: pointer;
-  transition: background 130ms ease, color 130ms ease;
 }
-.close:hover { background: var(--island-raised); color: var(--island-text); }
-[data-state="listening"] .close,
-[data-state="thinking"] .close,
-[data-state="answer"] .close,
-[data-state="error"] .close { display: grid; }
+.close:hover { color: var(--island-text); background: var(--island-raised); }
 
-/* --- body --- */
-.body { display: none; padding: 0 20px 16px; }
-[data-state="thinking"] .body,
-[data-state="answer"] .body,
-[data-state="error"] .body { display: block; }
-
-/* Collapse the body while it holds nothing. Without this, the moment between
-   "Transcribing…" and the first text renders as an empty black slab hanging
-   below the bar. */
-.body:not(:has(.has-content, .found:not([hidden]), .confirm:not([hidden]))) {
-  display: none;
-}
-
-.eyebrow {
-  display: block;
-  font-size: 9.5px;
-  font-weight: 650;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--island-faint);
-  margin-bottom: 5px;
-}
-
-.asked { padding-top: 2px; }
-.asked-text { font-size: 13.5px; line-height: 1.45; color: var(--island-dim); }
-.asked:not(.has-content) { display: none; }
-
-.answer { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--island-edge); }
-.answer:not(.has-content) { display: none; }
-
-.answer-text {
-  font-size: 14px;
-  line-height: 1.56;
+.asked {
+  font-size: 16px;
+  line-height: 1.45;
   color: var(--island-text);
-  max-height: 250px;
+  margin-bottom: 14px;
+}
+.asked:empty { display: none; }
+
+.answer {
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--island-text);
+  max-height: 260px;
   overflow-y: auto;
 }
-.answer-text p + p { margin-top: 9px; }
-.answer-text strong { font-weight: 600; }
-.answer-text code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  background: var(--island-raised);
-  border-radius: 5px;
-  padding: 1px 5px;
-}
-.answer-text::-webkit-scrollbar { width: 6px; }
-.answer-text::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 99px; }
+.answer p + p { margin-top: 10px; }
+.answer:empty { display: none; }
+.answer::-webkit-scrollbar { width: 6px; }
+.answer::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 99px; }
+[data-state="error"] .answer { color: #ff9d94; }
 
-/* --- what it found --- */
-.found { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--island-edge); }
-.found-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+/* --- sources --- */
+.found {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--island-edge);
+}
+.found[hidden] { display: none; }
 
 .found-item {
   display: flex;
@@ -253,11 +181,11 @@ html, body {
   border-radius: 10px;
   padding: 8px 11px;
 }
-.found-icon { width: 18px; height: 18px; flex-shrink: 0; border-radius: 4px; object-fit: contain; }
-.found-glyph { width: 18px; text-align: center; font-size: 13px; flex-shrink: 0; }
+.found-icon { width: 17px; height: 17px; flex-shrink: 0; border-radius: 4px; object-fit: contain; }
+.found-glyph { width: 17px; text-align: center; font-size: 13px; flex-shrink: 0; }
 .found-main { flex: 1; min-width: 0; }
 .found-title {
-  font-weight: 550;
+  font-weight: 540;
   color: var(--island-text);
   white-space: nowrap;
   overflow: hidden;
@@ -265,19 +193,32 @@ html, body {
 }
 .found-sub { font-size: 11.5px; color: var(--island-faint); margin-top: 1px; }
 
-/* --- approval sheet ---
-   Floats below the island rather than living inside it, because an approval is
-   a separate decision from whatever the island is reporting. Frosted rather
-   than solid, so it reads as sitting above the user's work. */
-/* The stage stacks the island and the sheet. justify-content must stay at the
-   start: in a column it controls the vertical axis, and centring it would float
-   the island into the middle of its window instead of against the bezel. */
-.stage {
-  flex-direction: column;
-  justify-content: flex-start;
+/* --- footer --- */
+.foot {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+}
+.foot-hint { font-size: 13px; color: var(--island-faint); }
+
+kbd {
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--island-dim);
+  background: rgba(255, 255, 255, 0.11);
+  border-radius: 5px;
+  padding: 2px 7px;
+  margin: 0 1px;
 }
 
+.meta { font-size: 11px; color: var(--island-faint); font-variant-numeric: tabular-nums; }
+
+/* --- approval sheet ---
+   Floats below the island rather than living inside it: an approval is a
+   separate decision from whatever the island is reporting. */
 .sheet {
   position: relative;
   width: 100%;
@@ -292,7 +233,6 @@ html, body {
   to   { opacity: 1; transform: none; }
 }
 
-/* Points back at the island it belongs to. */
 .sheet-arrow {
   position: absolute;
   top: -5px;
@@ -316,9 +256,7 @@ html, body {
   background: rgba(58, 58, 64, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 22px;
-  box-shadow:
-    0 20px 48px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(28px) saturate(1.5);
   -webkit-backdrop-filter: blur(28px) saturate(1.5);
 }
@@ -363,7 +301,6 @@ html, body {
   border-radius: 11px;
   padding: 9px 18px;
   cursor: pointer;
-  transition: filter 130ms ease, background 130ms ease;
 }
 .sheet-go { color: #fff; background: #0a84ff; }
 .sheet-go:hover { filter: brightness(1.1); }
@@ -386,50 +323,15 @@ html, body {
 }
 .sheet-close:hover { color: #fff; background: rgba(255, 255, 255, 0.24); }
 
-/* The island itself must not stretch now that the stage is a column. */
-.card { flex-shrink: 0; }
-
-/* --- actions --- */
-.actions { display: flex; align-items: center; gap: 7px; margin-top: 14px; }
-[data-state="thinking"] .actions,
-[data-state="error"] .actions { display: none; }
-.spacer { flex: 1; }
-
-.chip {
-  font: inherit;
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--island-dim);
-  background: var(--island-raised);
-  border: 1px solid transparent;
-  border-radius: var(--r-pill);
-  padding: 5px 13px;
-  cursor: pointer;
-  transition: color 130ms ease, background 130ms ease;
+/* Docked to the bottom edge instead: the rounding flips so the flat side is
+   always the one fused to the bezel. */
+[data-position="bottom"] .stage { justify-content: flex-end; padding: 28px 0 0; }
+[data-position="bottom"] .card { border-radius: var(--radius) var(--radius) 0 0; animation-name: emerge-up; }
+@keyframes emerge-up {
+  from { transform: translateY(16px); opacity: 0; }
+  to   { transform: none; opacity: 1; }
 }
-.chip:hover { color: var(--island-text); background: rgba(255, 255, 255, 0.13); }
-.chip.is-done { color: #30d158; background: rgba(48, 209, 88, 0.16); }
-
-.btn {
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 560;
-  border-radius: 9px;
-  padding: 6px 14px;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-.btn-quiet { color: var(--island-dim); background: var(--island-raised); }
-.btn-quiet:hover { color: var(--island-text); background: rgba(255, 255, 255, 0.13); }
-.btn-go { color: #fff; background: var(--accent); }
-.btn-go:hover { background: var(--accent-hover); }
-
-.meta { font-size: 11px; color: var(--island-faint); font-variant-numeric: tabular-nums; }
-
-/* --- error --- */
-[data-state="error"] .answer-text { color: #ff8a80; }
 
 @media (prefers-reduced-motion: reduce) {
-  .card { animation: none; transition: none; }
-  .dot { animation: none !important; }
+  .card, .sheet { animation: none; transition: none; }
 }

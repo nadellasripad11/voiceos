@@ -15,28 +15,24 @@ const TARGET_RATE = 16000;
 const el = {
   stage: document.getElementById('stage'),
   card: document.getElementById('card'),
-  dot: document.getElementById('dot'),
-  label: document.getElementById('label'),
   hint: document.getElementById('hint'),
   wave: document.getElementById('wave'),
   timer: document.getElementById('timer'),
   close: document.getElementById('close'),
   body: document.getElementById('body'),
-  asked: document.getElementById('asked'),
   askedText: document.getElementById('askedText'),
-  answer: document.getElementById('answer'),
   answerText: document.getElementById('answerText'),
-  found: document.getElementById('found'),
   foundList: document.getElementById('foundList'),
+  meta: document.getElementById('meta'),
+  kbdA: document.getElementById('kbdA'),
+  kbdB: document.getElementById('kbdB'),
   confirm: document.getElementById('confirm'),
   confirmApp: document.getElementById('confirmApp'),
   confirmTitle: document.getElementById('confirmTitle'),
   confirmRows: document.getElementById('confirmRows'),
   confirmIcon: document.getElementById('confirmIcon'),
   confirmGo: document.getElementById('confirmGo'),
-  confirmEdit: document.getElementById('confirmEdit'),
-  actions: document.getElementById('actions'),
-  meta: document.getElementById('meta')
+  confirmEdit: document.getElementById('confirmEdit')
 };
 
 const MODE_LABELS = { dictation: 'Dictation', agent: 'Agent', edit: 'Edit' };
@@ -53,25 +49,17 @@ let pendingConfirm = null;
 
 // --- State ---------------------------------------------------------------
 
-function setState(state, { label, hint } = {}) {
+function setState(state, { hint } = {}) {
   el.stage.dataset.state = state;
-  if (label !== undefined) el.label.textContent = label;
   if (hint !== undefined) el.hint.textContent = hint;
 }
 
 function clearBody() {
-  el.asked.classList.remove('has-content');
-  el.answer.classList.remove('has-content');
   el.askedText.textContent = '';
-  el.answerText.textContent = '';
-  el.found.hidden = true;
+  el.answerText.innerHTML = '';
   el.foundList.innerHTML = '';
+  el.foundList.hidden = true;
   el.meta.textContent = '';
-  for (const c of el.actions.querySelectorAll('.chip')) {
-    c.classList.remove('is-done');
-    c.textContent = c.dataset.act === 'insert' ? 'Insert'
-      : c.dataset.act === 'copy' ? 'Copy' : 'Ask again';
-  }
 }
 
 /**
@@ -121,35 +109,30 @@ function hideConfirm() {
 }
 
 function showAsked(text) {
-  if (!text) return;
-  el.askedText.textContent = text;
-  el.asked.classList.add('has-content');
+  el.askedText.textContent = text || '';
 }
 
 function showAnswer(text) {
-  if (!text) return;
-  // Paragraphs only. Rendering arbitrary model output as HTML would be an
-  // injection path, so everything is inserted as text nodes.
+  // Paragraphs only, as text nodes. Rendering model output as HTML would be an
+  // injection path straight into the overlay.
   el.answerText.innerHTML = '';
-  for (const para of String(text).split(/\n{2,}/)) {
+  for (const para of String(text || '').split(/\n{2,}/)) {
     const p = document.createElement('p');
     p.textContent = para.trim();
     if (p.textContent) el.answerText.appendChild(p);
   }
-  el.answer.classList.add('has-content');
 }
 
 function showFound(items = []) {
-  if (!items.length) { el.found.hidden = true; return; }
   el.foundList.innerHTML = '';
+  if (!items.length) { el.foundList.hidden = true; return; }
   for (const item of items) {
     const li = document.createElement('li');
     li.className = 'found-item';
-
     if (item.icon) {
       const img = document.createElement('img');
       img.className = 'found-icon';
-      img.src = `../shared/icons/${item.icon}`;
+      img.src = '../shared/icons/' + item.icon;
       img.alt = '';
       li.appendChild(img);
     } else {
@@ -158,7 +141,6 @@ function showFound(items = []) {
       span.textContent = item.glyph || '•';
       li.appendChild(span);
     }
-
     const main = document.createElement('div');
     main.className = 'found-main';
     const title = document.createElement('div');
@@ -174,7 +156,7 @@ function showFound(items = []) {
     li.appendChild(main);
     el.foundList.appendChild(li);
   }
-  el.found.hidden = false;
+  el.foundList.hidden = false;
 }
 
 // --- Timer ---------------------------------------------------------------
@@ -286,7 +268,7 @@ async function startCapture(mode, config) {
 
   clearBody();
   currentResult = null;
-  setState('listening', { label: MODE_LABELS[mode] || mode, hint: 'Listening…' });
+  setState('listening', { hint: 'Listening…' });
   startTimer();
 
   try {
@@ -316,7 +298,7 @@ async function startCapture(mode, config) {
     const input = event.inputBuffer.getChannelData(0);
     capture.chunks.push(new Float32Array(input));
     const level = rms(input);
-    window.voiceos.reportLevel(Math.min(1, level * 7));
+    bridge.reportLevel(Math.min(1, level * 7));
     maybeAutoStop(level);
   };
   capture.source.connect(capture.processor);
@@ -366,14 +348,14 @@ async function finishCapture() {
   const mode = capture.mode;
   teardownCapture();
 
-  setState('thinking', { label: MODE_LABELS[mode] || mode, hint: 'Transcribing…' });
+  setState('thinking', { hint: 'Transcribing…' });
 
   const merged = mergeChunks(chunks);
   if (!merged.length) return fail('Nothing recorded', 'No audio arrived from the microphone.');
 
   const pcm = floatToPcm16(downsample(merged, sampleRate, TARGET_RATE));
   try {
-    await window.voiceos.submitAudio({ pcm: pcm.buffer, sampleRate: TARGET_RATE, mode });
+    await bridge.submitAudio({ pcm: pcm.buffer, sampleRate: TARGET_RATE, mode });
   } catch (err) {
     fail('Could not process audio', err.message);
   }
@@ -398,7 +380,7 @@ function teardownCapture() {
 function fail(title, detail) {
   stopTimer();
   el.timer.textContent = '';
-  setState('error', { label: title, hint: '' });
+  setState('error', { hint: '' });
   clearBody();
   showAnswer(detail);
 }
@@ -451,42 +433,49 @@ function prettyKey(accelerator) {
 
 // --- Events from the main process ----------------------------------------
 
+// The preview harness renders this page without a preload, so the bridge can
+// legitimately be absent. Falling back to a no-op keeps the page inspectable
+// instead of dying on the first subscription.
+const bridge = window.voiceos || new Proxy({}, { get: () => () => () => {} });
+
+
 /** The island's rounding depends on which bezel it is fused to. */
 function applyPosition(position) {
   if (position) document.documentElement.dataset.position = position;
 }
 
-window.voiceos.onSessionIdle(({ hotkeys, position } = {}) => {
+bridge.onSessionIdle(({ hotkeys, position } = {}) => {
   applyPosition(position);
   teardownCapture();
   stopTimer();
   clearBody();
+  hideConfirm();
   currentResult = null;
   el.timer.textContent = '';
-  const dictate = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift+Space';
-  const agent = hotkeys && hotkeys.agent;
-  setState('idle', {
-    label: 'VoiceOS',
-    hint: agent
-      ? `Hold ${prettyKey(dictate)} to speak · ${prettyKey(agent)} to ask`
-      : `Hold ${prettyKey(dictate)} to speak`
-  });
+  setState('idle', { hint: '' });
+
+  // The footer states the chord that actually bound, which is not always the
+  // preferred one.
+  const dictate = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift';
+  const parts = prettyKey(dictate).split(' + ');
+  if (el.kbdA) el.kbdA.textContent = (parts[0] || 'ctrl').toLowerCase();
+  if (el.kbdB) el.kbdB.textContent = (parts[1] || 'shift').toLowerCase();
 });
 
-window.voiceos.onSessionStart(({ mode, config, position }) => {
+bridge.onSessionStart(({ mode, config, position }) => {
   applyPosition(position);
   startCapture(mode, config);
 });
-window.voiceos.onSessionStop(() => finishCapture());
-window.voiceos.onSessionCancel(() => window.voiceos.requestIdle());
+bridge.onSessionStop(() => finishCapture());
+bridge.onSessionCancel(() => bridge.requestIdle());
 
-window.voiceos.onSessionStage(({ stage }) => {
+bridge.onSessionStage(({ stage }) => {
   const labels = { transcribing: 'Transcribing…', polishing: 'Polishing…', inserting: 'Inserting…', thinking: 'Thinking…' };
   if (labels[stage]) setState('thinking', { hint: labels[stage] });
 });
 
 /** Dictation finished: show what was heard and where it went. */
-window.voiceos.onSessionResult((result) => {
+bridge.onSessionResult((result) => {
   stopTimer();
   el.timer.textContent = '';
   if (!result || !result.ok) {
@@ -495,7 +484,7 @@ window.voiceos.onSessionResult((result) => {
                 reason === 'silence' ? 'Try again a little closer to the microphone.' : (reason || ''));
   }
   currentResult = result;
-  setState('answer', { label: 'Dictation', hint: result.inserted ? 'Inserted' : 'Ready to paste' });
+  setState('answer', { hint: result.inserted ? 'Inserted' : 'Ready to paste' });
   clearBody();
   showAnswer(result.text);
   el.meta.textContent = [
@@ -506,13 +495,13 @@ window.voiceos.onSessionResult((result) => {
 });
 
 /** Agent finished: the answer, what it looked at, and anything awaiting approval. */
-window.voiceos.onAgentResult((payload) => {
+bridge.onAgentResult((payload) => {
   // The first message carries only the question, so the user sees what was
   // heard while the agent is still working.
   if (payload.pending) {
     stopTimer();
     el.timer.textContent = '';
-    setState('thinking', { label: 'Agent', hint: 'Working…' });
+    setState('thinking', { hint: 'Working…' });
     clearBody();
     showAsked(payload.question);
     return;
@@ -520,7 +509,7 @@ window.voiceos.onAgentResult((payload) => {
   stopTimer();
   el.timer.textContent = '';
   currentResult = payload;
-  setState('answer', { label: 'Agent', hint: '' });
+  setState('answer', { hint: '' });
   clearBody();
   showAsked(payload.question);
   showAnswer(payload.answer);
@@ -531,9 +520,9 @@ window.voiceos.onAgentResult((payload) => {
   el.meta.textContent = [payload.ms && `${payload.ms}ms`, payload.model].filter(Boolean).join(' · ');
 });
 
-window.voiceos.onAgentConfirm((confirm) => showConfirm(confirm));
+bridge.onAgentConfirm((confirm) => showConfirm(confirm));
 
-window.voiceos.onSessionError(({ message, detail }) => fail(message, detail));
+bridge.onSessionError(({ message, detail }) => fail(message, detail));
 
 /**
  * Plays a spoken reply.
@@ -542,7 +531,7 @@ window.voiceos.onSessionError(({ message, detail }) => fail(message, detail));
  * than letting two voices overlap.
  */
 let speaking = null;
-window.voiceos.onSpeak(({ data }) => {
+bridge.onSpeak(({ data }) => {
   if (!data) return;
   if (speaking) { try { speaking.pause(); } catch {} }
   speaking = new Audio('data:audio/wav;base64,' + data);
@@ -551,28 +540,22 @@ window.voiceos.onSpeak(({ data }) => {
 
 // --- Card actions ---------------------------------------------------------
 
-el.actions.addEventListener('click', async (e) => {
-  const btn = e.target.closest('.chip');
-  if (!btn || !currentResult) return;
+/**
+ * Clicking the answer copies it.
+ *
+ * The reference design carries no buttons, so the affordance is the text
+ * itself; the confirmation is the meta line, which is already there for
+ * timings and does not add anything to the layout.
+ */
+el.answerText.addEventListener('click', async () => {
+  if (!currentResult) return;
   const text = currentResult.answer || currentResult.text || '';
-
-  if (btn.dataset.act === 'insert') {
-    await window.voiceos.insertText(text);
-    markDone(btn, 'Inserted');
-  } else if (btn.dataset.act === 'copy') {
-    await window.voiceos.copyText(text);
-    markDone(btn, 'Copied');
-  } else if (btn.dataset.act === 'again') {
-    window.voiceos.startMode(el.label.textContent === 'Agent' ? 'agent' : 'dictation');
-  }
+  if (!text) return;
+  await bridge.copyText(text);
+  const previous = el.meta.textContent;
+  el.meta.textContent = 'Copied';
+  setTimeout(() => { el.meta.textContent = previous; }, 1500);
 });
-
-function markDone(btn, label) {
-  const original = btn.textContent;
-  btn.textContent = label;
-  btn.classList.add('is-done');
-  setTimeout(() => { btn.textContent = original; btn.classList.remove('is-done'); }, 1500);
-}
 
 el.confirm.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-act]');
@@ -583,25 +566,25 @@ el.confirm.addEventListener('click', async (e) => {
 
   if (act === 'edit') {
     // Editing hands the draft back rather than sending it.
-    await window.voiceos.resolveConfirm({ id, approved: false, edit: true });
+    await bridge.resolveConfirm({ id, approved: false, edit: true });
     el.meta.textContent = 'Opened for editing';
     return;
   }
-  await window.voiceos.resolveConfirm({ id, approved: act === 'approve' });
+  await bridge.resolveConfirm({ id, approved: act === 'approve' });
   el.meta.textContent = act === 'approve' ? 'Sent' : 'Cancelled';
 });
 
-el.close.addEventListener('click', () => window.voiceos.cancel());
+el.close.addEventListener('click', () => bridge.cancel());
 
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (pendingConfirm) {
     const id = pendingConfirm.id;
     hideConfirm();
-    window.voiceos.resolveConfirm({ id, approved: false });
+    bridge.resolveConfirm({ id, approved: false });
     return;
   }
-  window.voiceos.cancel();
+  bridge.cancel();
 });
 
 // --- Pointer passthrough --------------------------------------------------
@@ -612,7 +595,7 @@ let interactive = false;
 function setInteractive(next) {
   if (interactive === next) return;
   interactive = next;
-  window.voiceos.setInteractive(next);
+  bridge.setInteractive(next);
 }
 
 function within(node, x, y) {
@@ -628,7 +611,7 @@ window.addEventListener('mouseleave', () => setInteractive(false));
 
 el.card.addEventListener('click', (e) => {
   if (e.target.closest('button')) return;
-  if (el.stage.dataset.state === 'idle') window.voiceos.startMode('dictation');
+  if (el.stage.dataset.state === 'idle') bridge.startMode('dictation');
 });
 
 drawWave();
