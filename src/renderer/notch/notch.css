@@ -47,6 +47,20 @@ html, body {
   padding: 0 0 28px;
 }
 
+/* The strip the island hangs from. Full width and the same black, so the two
+   read as one surface fused to the top of the display. */
+.ledge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  background: var(--island);
+}
+[data-position="bottom"] .ledge { top: auto; bottom: 0; }
+
+.stage { position: relative; }
+
 /* --- the island --- */
 .card {
   flex-shrink: 0;
@@ -64,7 +78,7 @@ html, body {
 }
 
 /* Resting: a small lozenge holding just the level meter. */
-[data-state="idle"] .card { width: 168px; }
+[data-state="idle"] .card { width: 460px; }
 [data-state="listening"] .card,
 [data-state="transcribing"] .card,
 [data-state="thinking"] .card { width: 380px; }
@@ -72,20 +86,37 @@ html, body {
 [data-state="error"] .card { width: 560px; }
 
 /* Hovering swells it, the way the Dynamic Island does when reached for. */
-[data-state="idle"] .card:hover { width: 208px; }
+[data-state="idle"] .card:hover { width: 492px; }
 
 /* --- the single line --- */
 .bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 46px;
+  gap: 14px;
+  height: 44px;
   padding: 0 22px;
 }
+/* Resting: a tall black field with the orb sitting at the left. */
+[data-state="idle"] .bar { height: 64px; padding: 0 26px; }
 [data-state="answer"] .bar,
 [data-state="error"] .bar { display: none; }
 
-.wave { display: block; flex: 1; min-width: 0; height: 26px; }
+/* At rest the island shows only the orb; the ribbon appears when listening. */
+.orb-rest {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #a0e9ff 0%, #4aa8ff 38%, #2d6fd8 62%, #1b3f8f 100%);
+  box-shadow: 0 0 10px rgba(74, 168, 255, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.55);
+  transition: width 240ms cubic-bezier(0.32, 0.72, 0, 1), height 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+[data-state="idle"] .card:hover .orb-rest { width: 25px; height: 25px; }
+
+.wave { display: none; flex: 1; min-width: 0; height: 26px; }
+[data-state="listening"] .wave,
+[data-state="transcribing"] .wave,
+[data-state="thinking"] .wave { display: block; }
 
 .hint {
   font-size: 12.5px;

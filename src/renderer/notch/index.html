@@ -14,10 +14,13 @@
     speaking expands it; an answer expands it further into a reading panel.
   -->
   <div class="stage" id="stage" data-state="idle">
+    <!-- A hairline black strip across the full width that the island hangs from. -->
+    <div class="ledge" aria-hidden="true"></div>
     <div class="card" id="card">
 
       <!-- Resting and listening: a single line -->
       <div class="bar">
+        <span class="orb orb-rest" aria-hidden="true"></span>
         <canvas id="wave" class="wave" width="560" height="44" aria-hidden="true"></canvas>
         <span class="hint" id="hint"></span>
         <span class="timer" id="timer"></span>

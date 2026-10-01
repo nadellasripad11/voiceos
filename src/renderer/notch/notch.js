@@ -45,6 +45,17 @@ const capture = {
 
 /** The text currently shown, so Insert and Copy know what to act on. */
 let currentResult = null;
+
+/**
+ * The last answer, kept after the island collapses.
+ *
+ * An answer dismisses itself so the island does not sit over the user's work,
+ * but the content is retained so hovering brings it straight back rather than
+ * forcing them to ask again.
+ */
+let lastAnswer = null;
+let collapseTimer = null;
+const ANSWER_DWELL_MS = 5000;
 let pendingConfirm = null;
 
 // --- State ---------------------------------------------------------------
@@ -268,6 +279,8 @@ async function startCapture(mode, config) {
 
   clearBody();
   currentResult = null;
+  lastAnswer = null;
+  cancelCollapse();
   setState('listening', { hint: 'Listening…' });
   startTimer();
 
@@ -431,6 +444,36 @@ function prettyKey(accelerator) {
   return String(accelerator).replace(/CommandOrControl|Control/g, 'Ctrl').replace(/\+/g, ' + ');
 }
 
+/** Shows the answer and starts its dismissal countdown. */
+function presentAnswer(render) {
+  lastAnswer = render;
+  render();
+  scheduleCollapse();
+}
+
+function scheduleCollapse(delay = ANSWER_DWELL_MS) {
+  clearTimeout(collapseTimer);
+  collapseTimer = setTimeout(() => {
+    // Never collapse out from under an approval the user still has to answer.
+    if (pendingConfirm) return scheduleCollapse(2000);
+    collapseToIdle();
+  }, delay);
+}
+
+function cancelCollapse() { clearTimeout(collapseTimer); collapseTimer = null; }
+
+function collapseToIdle() {
+  cancelCollapse();
+  setState('idle', { hint: '' });
+}
+
+/** Hovering the collapsed island restores the answer it was showing. */
+function restoreAnswer() {
+  if (!lastAnswer) return;
+  cancelCollapse();
+  lastAnswer();
+}
+
 // --- Events from the main process ----------------------------------------
 
 // The preview harness renders this page without a preload, so the bridge can
@@ -484,14 +527,15 @@ bridge.onSessionResult((result) => {
                 reason === 'silence' ? 'Try again a little closer to the microphone.' : (reason || ''));
   }
   currentResult = result;
-  setState('answer', { hint: result.inserted ? 'Inserted' : 'Ready to paste' });
-  clearBody();
-  showAnswer(result.text);
-  el.meta.textContent = [
-    `${result.ms}ms`,
-    result.stt && result.stt.model,
-    result.target && result.target.process
-  ].filter(Boolean).join(' · ');
+  presentAnswer(() => {
+    setState('answer', { hint: '' });
+    clearBody();
+    showAnswer(result.text);
+    el.meta.textContent = [
+      result.ms ? `${result.ms}ms` : null,
+      result.target && result.target.process
+    ].filter(Boolean).join(' · ');
+  });
 });
 
 /** Agent finished: the answer, what it looked at, and anything awaiting approval. */
@@ -501,6 +545,7 @@ bridge.onAgentResult((payload) => {
   if (payload.pending) {
     stopTimer();
     el.timer.textContent = '';
+    cancelCollapse();
     setState('thinking', { hint: 'Working…' });
     clearBody();
     showAsked(payload.question);
@@ -509,15 +554,16 @@ bridge.onAgentResult((payload) => {
   stopTimer();
   el.timer.textContent = '';
   currentResult = payload;
-  setState('answer', { hint: '' });
-  clearBody();
-  showAsked(payload.question);
-  showAnswer(payload.answer);
-  showFound(payload.found || []);
-
-  if (payload.confirm) showConfirm(payload.confirm);
-  else hideConfirm();
-  el.meta.textContent = [payload.ms && `${payload.ms}ms`, payload.model].filter(Boolean).join(' · ');
+  presentAnswer(() => {
+    setState('answer', { hint: '' });
+    clearBody();
+    showAsked(payload.question);
+    showAnswer(payload.answer);
+    showFound(payload.found || []);
+    if (payload.confirm) showConfirm(payload.confirm);
+    el.meta.textContent = [payload.ms ? `${payload.ms}ms` : null, payload.model]
+      .filter(Boolean).join(' · ');
+  });
 });
 
 bridge.onAgentConfirm((confirm) => showConfirm(confirm));
@@ -605,7 +651,19 @@ function within(node, x, y) {
 }
 
 window.addEventListener('mousemove', (e) => {
-  setInteractive(within(el.card, e.clientX, e.clientY) || within(el.confirm, e.clientX, e.clientY));
+  const overCard = within(el.card, e.clientX, e.clientY);
+  const overSheet = within(el.confirm, e.clientX, e.clientY);
+  setInteractive(overCard || overSheet);
+
+  if (overCard || overSheet) {
+    // Reaching for it means they want to read it, so stop the countdown — and
+    // bring the answer back if it has already gone.
+    if (el.stage.dataset.state === 'idle') restoreAnswer();
+    else cancelCollapse();
+  } else if (el.stage.dataset.state === 'answer' && !collapseTimer) {
+    // Pointer left while an answer is up: start the countdown again.
+    scheduleCollapse(1500);
+  }
 });
 window.addEventListener('mouseleave', () => setInteractive(false));
 
