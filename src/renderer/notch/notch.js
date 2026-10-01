@@ -1,138 +1,191 @@
 'use strict';
 /**
- * Notch overlay renderer.
+ * Notch renderer.
  *
- * Owns microphone capture. Chromium's getUserMedia means no native audio
- * dependency at all, and the renderer is also the natural place to draw the
- * waveform from the same data.
+ * Owns microphone capture and the four display states. Audio is captured here
+ * because Chromium's getUserMedia means no native audio dependency, and the
+ * waveform is drawn from the same samples.
  *
- * Audio leaves here as 16 kHz mono 16-bit PCM, which is exactly what Whisper
- * consumes, so the main process does no conversion work.
+ * Audio leaves as 16 kHz mono 16-bit PCM, exactly what Whisper consumes, so the
+ * main process does no conversion.
  */
 
 const TARGET_RATE = 16000;
 
 const el = {
   stage: document.getElementById('stage'),
-  mode: document.getElementById('mode'),
+  card: document.getElementById('card'),
+  dot: document.getElementById('dot'),
+  label: document.getElementById('label'),
   hint: document.getElementById('hint'),
-  transcript: document.getElementById('transcript'),
-  timer: document.getElementById('timer'),
   wave: document.getElementById('wave'),
-  cancel: document.getElementById('cancel'),
-  toast: document.getElementById('toast'),
-  toastTitle: document.getElementById('toastTitle'),
-  toastDetail: document.getElementById('toastDetail')
+  timer: document.getElementById('timer'),
+  close: document.getElementById('close'),
+  body: document.getElementById('body'),
+  asked: document.getElementById('asked'),
+  askedText: document.getElementById('askedText'),
+  answer: document.getElementById('answer'),
+  answerText: document.getElementById('answerText'),
+  found: document.getElementById('found'),
+  foundList: document.getElementById('foundList'),
+  confirm: document.getElementById('confirm'),
+  confirmTitle: document.getElementById('confirmTitle'),
+  confirmDetail: document.getElementById('confirmDetail'),
+  actions: document.getElementById('actions'),
+  meta: document.getElementById('meta')
 };
 
 const MODE_LABELS = { dictation: 'Dictation', agent: 'Agent', edit: 'Edit' };
 
 const capture = {
-  stream: null,
-  context: null,
-  source: null,
-  processor: null,
-  analyser: null,
-  chunks: [],
-  sampleRate: 0,
-  startedAt: 0,
-  timerHandle: null,
-  rafHandle: null,
-  silenceSince: 0,
-  hasSpoken: false,
-  levelReported: false,
-  config: null,
-  mode: 'dictation',
-  stopping: false
+  stream: null, context: null, source: null, processor: null, analyser: null,
+  chunks: [], sampleRate: 0, startedAt: 0, timerHandle: null, rafHandle: null,
+  silenceSince: 0, hasSpoken: false, config: null, mode: 'dictation', stopping: false
 };
 
-// --- UI helpers -----------------------------------------------------------
+/** The text currently shown, so Insert and Copy know what to act on. */
+let currentResult = null;
+let pendingConfirm = null;
 
-function setState(state, hint) {
+// --- State ---------------------------------------------------------------
+
+function setState(state, { label, hint } = {}) {
   el.stage.dataset.state = state;
+  if (label !== undefined) el.label.textContent = label;
   if (hint !== undefined) el.hint.textContent = hint;
 }
 
-function showToast(title, detail) {
-  el.toastTitle.textContent = title || '';
-  el.toastDetail.textContent = detail || '';
-  el.toast.hidden = false;
+function clearBody() {
+  el.asked.classList.remove('has-content');
+  el.answer.classList.remove('has-content');
+  el.askedText.textContent = '';
+  el.answerText.textContent = '';
+  el.found.hidden = true;
+  el.foundList.innerHTML = '';
+  el.confirm.hidden = true;
+  el.meta.textContent = '';
+  pendingConfirm = null;
+  for (const c of el.actions.querySelectorAll('.chip')) {
+    c.classList.remove('is-done');
+    c.textContent = c.dataset.act === 'insert' ? 'Insert'
+      : c.dataset.act === 'copy' ? 'Copy' : 'Ask again';
+  }
 }
 
-function hideToast() {
-  el.toast.hidden = true;
+function showAsked(text) {
+  if (!text) return;
+  el.askedText.textContent = text;
+  el.asked.classList.add('has-content');
 }
+
+function showAnswer(text) {
+  if (!text) return;
+  // Paragraphs only. Rendering arbitrary model output as HTML would be an
+  // injection path, so everything is inserted as text nodes.
+  el.answerText.innerHTML = '';
+  for (const para of String(text).split(/\n{2,}/)) {
+    const p = document.createElement('p');
+    p.textContent = para.trim();
+    if (p.textContent) el.answerText.appendChild(p);
+  }
+  el.answer.classList.add('has-content');
+}
+
+function showFound(items = []) {
+  if (!items.length) { el.found.hidden = true; return; }
+  el.foundList.innerHTML = '';
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.className = 'found-item';
+
+    if (item.icon) {
+      const img = document.createElement('img');
+      img.className = 'found-icon';
+      img.src = `../shared/icons/${item.icon}`;
+      img.alt = '';
+      li.appendChild(img);
+    } else {
+      const span = document.createElement('span');
+      span.className = 'found-glyph';
+      span.textContent = item.glyph || '•';
+      li.appendChild(span);
+    }
+
+    const main = document.createElement('div');
+    main.className = 'found-main';
+    const title = document.createElement('div');
+    title.className = 'found-title';
+    title.textContent = item.title || '';
+    main.appendChild(title);
+    if (item.subtitle) {
+      const sub = document.createElement('div');
+      sub.className = 'found-sub';
+      sub.textContent = item.subtitle;
+      main.appendChild(sub);
+    }
+    li.appendChild(main);
+    el.foundList.appendChild(li);
+  }
+  el.found.hidden = false;
+}
+
+// --- Timer ---------------------------------------------------------------
 
 function startTimer() {
   capture.startedAt = Date.now();
   stopTimer();
   capture.timerHandle = setInterval(() => {
-    const s = (Date.now() - capture.startedAt) / 1000;
-    el.timer.textContent = `${s.toFixed(1)}s`;
+    el.timer.textContent = `${((Date.now() - capture.startedAt) / 1000).toFixed(1)}s`;
   }, 100);
 }
 
 function stopTimer() {
-  if (capture.timerHandle) {
-    clearInterval(capture.timerHandle);
-    capture.timerHandle = null;
-  }
+  if (capture.timerHandle) { clearInterval(capture.timerHandle); capture.timerHandle = null; }
 }
 
-// --- Waveform -------------------------------------------------------------
+// --- Waveform ------------------------------------------------------------
 
 const waveCtx = el.wave.getContext('2d');
-const BAR_COUNT = 56;
-const levels = new Array(BAR_COUNT).fill(0);
+const BARS = 44;
+const levels = new Array(BARS).fill(0);
 
 function drawWave() {
   const { width, height } = el.wave;
   waveCtx.clearRect(0, 0, width, height);
-
-  const barWidth = width / BAR_COUNT;
+  const bw = width / BARS;
   const mid = height / 2;
-  for (let i = 0; i < BAR_COUNT; i++) {
+
+  for (let i = 0; i < BARS; i++) {
     const level = levels[i];
-    // A floor keeps the bar visible as a quiet line instead of vanishing.
-    const h = Math.max(2, level * height * 0.95);
-    const x = i * barWidth;
-    // Bars take the accent red while recording and neutral ink once we are
-    // processing, matching the status dot so the two never disagree.
-    const recording = el.stage.dataset.state === 'listening';
-    const alpha = 0.3 + level * 0.7;
-    waveCtx.fillStyle = recording
-      ? `rgba(251, 66, 104, ${alpha.toFixed(3)})`
-      : `rgba(107, 114, 128, ${(alpha * 0.8).toFixed(3)})`;
-    roundRect(waveCtx, x + barWidth * 0.22, mid - h / 2, barWidth * 0.56, h, barWidth * 0.28);
+    const h = Math.max(3, level * height * 0.92);
+    const x = i * bw + bw * 0.26;
+    const w = bw * 0.48;
+    const alpha = 0.28 + level * 0.72;
+    waveCtx.fillStyle = `rgba(251, 66, 104, ${alpha.toFixed(3)})`;
+    roundRect(waveCtx, x, mid - h / 2, w, h, Math.min(w / 2, h / 2));
     waveCtx.fill();
   }
 }
 
 function roundRect(ctx, x, y, w, h, r) {
-  const radius = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.arcTo(x + w, y, x + w, y + h, radius);
-  ctx.arcTo(x + w, y + h, x, y + h, radius);
-  ctx.arcTo(x, y + h, x, y, radius);
-  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
-}
-
-function pushLevel(level) {
-  levels.push(Math.min(1, level));
-  levels.shift();
 }
 
 function animate() {
   if (capture.analyser) {
     const buf = new Float32Array(capture.analyser.fftSize);
     capture.analyser.getFloatTimeDomainData(buf);
-    // Scaled so normal speech fills most of the bar height.
-    pushLevel(rms(buf) * 7);
+    levels.push(Math.min(1, rms(buf) * 7));
   } else {
-    pushLevel(0);
+    levels.push(0);
   }
+  levels.shift();
   drawWave();
   capture.rafHandle = requestAnimationFrame(animate);
 }
@@ -143,35 +196,25 @@ function rms(arr) {
   return Math.sqrt(sum / arr.length);
 }
 
-// --- Capture --------------------------------------------------------------
+// --- Capture -------------------------------------------------------------
 
 async function startCapture(mode, config) {
   if (capture.stream) return;
-  capture.mode = mode;
-  capture.config = config;
-  capture.chunks = [];
-  capture.stopping = false;
-  capture.silenceSince = 0;
-  capture.hasSpoken = false;
-  capture.levelReported = false;
-  hideToast();
-  el.transcript.textContent = '';
-  el.mode.textContent = MODE_LABELS[mode] || mode;
-  setState('listening', 'Listening…');
+  Object.assign(capture, {
+    mode, config, chunks: [], stopping: false, silenceSince: 0, hasSpoken: false
+  });
+
+  clearBody();
+  currentResult = null;
+  setState('listening', { label: MODE_LABELS[mode] || mode, hint: 'Listening…' });
   startTimer();
 
   try {
     capture.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
   } catch (err) {
-    setState('error', 'No microphone');
-    showToast('Microphone unavailable', describeMicError(err));
+    fail('Microphone unavailable', describeMicError(err));
     return;
   }
 
@@ -181,14 +224,13 @@ async function startCapture(mode, config) {
 
   capture.analyser = capture.context.createAnalyser();
   capture.analyser.fftSize = 1024;
-  capture.analyser.smoothingTimeConstant = 0.6;
+  capture.analyser.smoothingTimeConstant = 0.55;
   capture.source.connect(capture.analyser);
 
-  // ScriptProcessor is deprecated but needs no separate module file, works
-  // offline, and is reliable for this one job. AudioWorklet would add a file to
-  // load over a custom protocol for no practical gain here.
-  const BUFFER = 4096;
-  capture.processor = capture.context.createScriptProcessor(BUFFER, 1, 1);
+  // ScriptProcessor is deprecated but needs no separate module file and works
+  // offline; AudioWorklet would add a file fetched over a custom protocol for
+  // no practical gain here.
+  capture.processor = capture.context.createScriptProcessor(4096, 1, 1);
   capture.processor.onaudioprocess = (event) => {
     if (capture.stopping) return;
     const input = event.inputBuffer.getChannelData(0);
@@ -198,8 +240,8 @@ async function startCapture(mode, config) {
     maybeAutoStop(level);
   };
   capture.source.connect(capture.processor);
-  // ScriptProcessor only fires while connected to a destination. A zero-gain
-  // node keeps it running without the mic being audible through the speakers.
+  // A ScriptProcessor only fires while connected to a destination; a silent
+  // gain node keeps it running without the mic being audible.
   const mute = capture.context.createGain();
   mute.gain.value = 0;
   capture.processor.connect(mute);
@@ -209,111 +251,85 @@ async function startCapture(mode, config) {
 }
 
 /**
- * Ends the utterance after a run of silence, so the user need not press again.
+ * Ends the utterance after a run of silence.
  *
- * Silence is only allowed to end the session once speech has actually been
- * heard. Counting silence from the moment recording starts meant that pausing
- * to think, or simply drawing breath, ended the session before the first word.
+ * Silence may only end the session once speech has actually been heard;
+ * counting from the moment recording starts cut people off while they drew
+ * breath before their first word.
  */
 function maybeAutoStop(level) {
   const vad = capture.config && capture.config.stt && capture.config.stt.vad;
   if (!vad || !vad.enabled) return;
 
   const elapsed = Date.now() - capture.startedAt;
-  if (elapsed > (vad.maxUtteranceMs || 120000)) {
-    finishCapture('max length reached');
-    return;
-  }
+  if (elapsed > (vad.maxUtteranceMs || 120000)) return finishCapture();
 
   if (level >= vad.threshold) {
     capture.hasSpoken = true;
     capture.silenceSince = 0;
-    // Surface the level so the user can see the mic is actually picking them up.
-    if (!capture.levelReported) {
-      capture.levelReported = true;
-      setState('listening', 'Listening…');
-    }
     return;
   }
-
-  // Nothing above threshold yet: keep waiting rather than giving up.
   if (!capture.hasSpoken) return;
   if (elapsed < (vad.minRecordMs || 1200)) return;
 
   if (!capture.silenceSince) capture.silenceSince = Date.now();
-  else if (Date.now() - capture.silenceSince > vad.silenceMs) finishCapture('silence');
+  else if (Date.now() - capture.silenceSince > vad.silenceMs) finishCapture();
 }
 
-async function finishCapture(reason) {
+async function finishCapture() {
   if (!capture.stream || capture.stopping) return;
   capture.stopping = true;
   stopTimer();
-  setState('transcribing', 'Transcribing…');
 
   const sampleRate = capture.sampleRate;
   const chunks = capture.chunks;
+  const mode = capture.mode;
   teardownCapture();
 
+  setState('thinking', { label: MODE_LABELS[mode] || mode, hint: 'Transcribing…' });
+
   const merged = mergeChunks(chunks);
-  if (!merged.length) {
-    setState('error', 'Nothing recorded');
-    showToast('Nothing recorded', 'No audio arrived from the microphone.');
-    return;
-  }
+  if (!merged.length) return fail('Nothing recorded', 'No audio arrived from the microphone.');
 
-  const downsampled = downsample(merged, sampleRate, TARGET_RATE);
-  const pcm = floatToPcm16(downsampled);
-
+  const pcm = floatToPcm16(downsample(merged, sampleRate, TARGET_RATE));
   try {
-    await window.voiceos.submitAudio({
-      pcm: pcm.buffer,
-      sampleRate: TARGET_RATE,
-      mode: capture.mode
-    });
+    await window.voiceos.submitAudio({ pcm: pcm.buffer, sampleRate: TARGET_RATE, mode });
   } catch (err) {
-    setState('error', 'Failed');
-    showToast('Could not process audio', err.message);
+    fail('Could not process audio', err.message);
   }
 }
 
 function teardownCapture() {
-  if (capture.rafHandle) {
-    cancelAnimationFrame(capture.rafHandle);
-    capture.rafHandle = null;
-  }
+  if (capture.rafHandle) { cancelAnimationFrame(capture.rafHandle); capture.rafHandle = null; }
   if (capture.processor) {
     capture.processor.onaudioprocess = null;
     try { capture.processor.disconnect(); } catch {}
     capture.processor = null;
   }
-  if (capture.source) {
-    try { capture.source.disconnect(); } catch {}
-    capture.source = null;
-  }
+  if (capture.source) { try { capture.source.disconnect(); } catch {} capture.source = null; }
   capture.analyser = null;
-  if (capture.context) {
-    capture.context.close().catch(() => {});
-    capture.context = null;
-  }
-  if (capture.stream) {
-    for (const track of capture.stream.getTracks()) track.stop();
-    capture.stream = null;
-  }
+  if (capture.context) { capture.context.close().catch(() => {}); capture.context = null; }
+  if (capture.stream) { for (const t of capture.stream.getTracks()) t.stop(); capture.stream = null; }
   capture.chunks = [];
   levels.fill(0);
   drawWave();
 }
 
-// --- Audio maths ----------------------------------------------------------
+function fail(title, detail) {
+  stopTimer();
+  el.timer.textContent = '';
+  setState('error', { label: title, hint: '' });
+  clearBody();
+  showAnswer(detail);
+}
+
+// --- Audio maths ---------------------------------------------------------
 
 function mergeChunks(chunks) {
   const total = chunks.reduce((n, c) => n + c.length, 0);
   const out = new Float32Array(total);
   let offset = 0;
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.length;
-  }
+  for (const c of chunks) { out.set(c, offset); offset += c.length; }
   return out;
 }
 
@@ -326,8 +342,7 @@ function downsample(input, inputRate, outputRate) {
   for (let i = 0; i < outLength; i++) {
     const start = Math.floor(i * ratio);
     const end = Math.min(input.length, Math.floor((i + 1) * ratio));
-    let sum = 0;
-    let count = 0;
+    let sum = 0, count = 0;
     for (let j = start; j < end; j++) { sum += input[j]; count++; }
     out[i] = count ? sum / count : 0;
   }
@@ -344,85 +359,125 @@ function floatToPcm16(float32) {
 }
 
 function describeMicError(err) {
-  if (err.name === 'NotAllowedError') {
-    return 'Microphone permission was denied. Allow it in Windows Settings → Privacy → Microphone.';
-  }
+  if (err.name === 'NotAllowedError') return 'Microphone permission was denied. Allow it in Windows Settings › Privacy › Microphone.';
   if (err.name === 'NotFoundError') return 'No microphone was found on this device.';
   if (err.name === 'NotReadableError') return 'Another application is using the microphone.';
   return err.message;
 }
 
-// --- Wiring ---------------------------------------------------------------
+function prettyKey(accelerator) {
+  return String(accelerator).replace(/CommandOrControl|Control/g, 'Ctrl').replace(/\+/g, ' + ');
+}
+
+// --- Events from the main process ----------------------------------------
 
 window.voiceos.onSessionIdle(({ hotkeys } = {}) => {
   teardownCapture();
   stopTimer();
-  hideToast();
-  el.transcript.textContent = '';
+  clearBody();
+  currentResult = null;
   el.timer.textContent = '';
-  el.mode.textContent = 'VoiceOS';
   const key = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift+Space';
-  el.hint.textContent = `Press ${prettyKey(key)} to dictate`;
-  setState('idle');
+  setState('idle', { label: 'VoiceOS', hint: `Press ${prettyKey(key)} to dictate` });
 });
 
-/** Turns an Electron accelerator into something readable on the pill. */
-function prettyKey(accelerator) {
-  return String(accelerator)
-    .replace(/CommandOrControl|Control/g, 'Ctrl')
-    .replace(/\+/g, ' + ');
-}
-
-window.voiceos.onSessionStart(({ mode, config }) => {
-  startCapture(mode, config);
-});
-
-window.voiceos.onSessionStop(() => {
-  finishCapture('user stopped');
-});
-
-window.voiceos.onSessionCancel(() => {
-  teardownCapture();
-  stopTimer();
-  setState('idle', '');
-  hideToast();
-});
+window.voiceos.onSessionStart(({ mode, config }) => startCapture(mode, config));
+window.voiceos.onSessionStop(() => finishCapture());
+window.voiceos.onSessionCancel(() => window.voiceos.requestIdle());
 
 window.voiceos.onSessionStage(({ stage }) => {
-  const labels = {
-    transcribing: 'Transcribing…',
-    polishing: 'Polishing…',
-    inserting: 'Inserting…'
-  };
-  setState(stage, labels[stage] || stage);
+  const labels = { transcribing: 'Transcribing…', polishing: 'Polishing…', inserting: 'Inserting…', thinking: 'Thinking…' };
+  if (labels[stage]) setState('thinking', { hint: labels[stage] });
 });
 
+/** Dictation finished: show what was heard and where it went. */
 window.voiceos.onSessionResult((result) => {
+  stopTimer();
+  el.timer.textContent = '';
   if (!result || !result.ok) {
     const reason = result && result.reason;
-    setState('error', reason === 'silence' ? 'No speech heard' : 'Nothing to insert');
-    return;
+    return fail(reason === 'silence' ? 'No speech heard' : 'Nothing to insert',
+                reason === 'silence' ? 'Try again a little closer to the microphone.' : (reason || ''));
   }
-  setState('done', result.inserted ? `Inserted in ${result.ms}ms` : 'Copied to clipboard');
-  el.transcript.textContent = result.text;
+  currentResult = result;
+  setState('answer', { label: 'Dictation', hint: result.inserted ? 'Inserted' : 'Ready to paste' });
+  clearBody();
+  showAnswer(result.text);
+  el.meta.textContent = [
+    `${result.ms}ms`,
+    result.stt && result.stt.model,
+    result.target && result.target.process
+  ].filter(Boolean).join(' · ');
 });
 
-window.voiceos.onSessionError(({ message, detail }) => {
-  setState('error', message);
-  showToast(message, detail);
+/** Agent finished: the answer, what it looked at, and anything awaiting approval. */
+window.voiceos.onAgentResult((payload) => {
+  stopTimer();
+  el.timer.textContent = '';
+  currentResult = payload;
+  setState('answer', { label: 'Agent', hint: '' });
+  clearBody();
+  showAsked(payload.question);
+  showAnswer(payload.answer);
+  showFound(payload.found || []);
+
+  if (payload.confirm) {
+    pendingConfirm = payload.confirm;
+    el.confirmTitle.textContent = payload.confirm.title || 'Confirm this action';
+    el.confirmDetail.textContent = payload.confirm.detail || '';
+    el.confirm.hidden = false;
+  }
+  el.meta.textContent = [payload.ms && `${payload.ms}ms`, payload.model].filter(Boolean).join(' · ');
 });
 
-el.cancel.addEventListener('click', () => {
-  window.voiceos.cancel();
+window.voiceos.onSessionError(({ message, detail }) => fail(message, detail));
+
+// --- Card actions ---------------------------------------------------------
+
+el.actions.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.chip');
+  if (!btn || !currentResult) return;
+  const text = currentResult.answer || currentResult.text || '';
+
+  if (btn.dataset.act === 'insert') {
+    await window.voiceos.insertText(text);
+    markDone(btn, 'Inserted');
+  } else if (btn.dataset.act === 'copy') {
+    await window.voiceos.copyText(text);
+    markDone(btn, 'Copied');
+  } else if (btn.dataset.act === 'again') {
+    window.voiceos.startMode(el.label.textContent === 'Agent' ? 'agent' : 'dictation');
+  }
 });
 
-// --- Pointer passthrough ---------------------------------------------------
-// The window covers a strip of the screen permanently, so it only takes mouse
-// input while the pointer is actually over the pill. Everywhere else, clicks
-// fall through to the app underneath.
-const pillEl = document.getElementById('pill');
+function markDone(btn, label) {
+  const original = btn.textContent;
+  btn.textContent = label;
+  btn.classList.add('is-done');
+  setTimeout(() => { btn.textContent = original; btn.classList.remove('is-done'); }, 1500);
+}
+
+el.confirm.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn || !pendingConfirm) return;
+  const approved = btn.dataset.act === 'approve';
+  el.confirm.hidden = true;
+  await window.voiceos.resolveConfirm({ id: pendingConfirm.id, approved });
+  pendingConfirm = null;
+  if (!approved) el.meta.textContent = 'Cancelled';
+});
+
+el.close.addEventListener('click', () => window.voiceos.cancel());
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') window.voiceos.cancel();
+});
+
+// --- Pointer passthrough --------------------------------------------------
+// The window covers a band across the top of the screen permanently, so it only
+// takes mouse input while the pointer is over the card itself.
+
 let interactive = false;
-
 function setInteractive(next) {
   if (interactive === next) return;
   interactive = next;
@@ -430,27 +485,18 @@ function setInteractive(next) {
 }
 
 window.addEventListener('mousemove', (e) => {
-  const r = pillEl.getBoundingClientRect();
-  const inside =
+  const r = el.card.getBoundingClientRect();
+  setInteractive(
     e.clientX >= r.left && e.clientX <= r.right &&
-    e.clientY >= r.top && e.clientY <= r.bottom;
-  setInteractive(inside);
+    e.clientY >= r.top && e.clientY <= r.bottom
+  );
 });
-
 window.addEventListener('mouseleave', () => setInteractive(false));
 
-// Clicking the resting pill starts dictation, so the overlay is usable without
-// the keyboard.
-pillEl.addEventListener('click', (e) => {
-  if (e.target.closest('.cancel')) return;
+el.card.addEventListener('click', (e) => {
+  if (e.target.closest('button')) return;
   if (el.stage.dataset.state === 'idle') window.voiceos.startMode('dictation');
 });
 
-// Esc works whenever the overlay happens to have pointer focus; the main
-// process also owns a global Escape binding for when it does not.
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') window.voiceos.cancel();
-});
-
 drawWave();
-setState('idle', '');
+setState('idle');

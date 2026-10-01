@@ -7,21 +7,16 @@
  */
 const { contextBridge, ipcRenderer } = require('electron');
 
-const listeners = new Map();
-
 function on(channel, handler) {
   const wrapped = (_event, payload) => handler(payload);
-  listeners.set(handler, wrapped);
   ipcRenderer.on(channel, wrapped);
-  return () => {
-    ipcRenderer.removeListener(channel, wrapped);
-    listeners.delete(handler);
-  };
+  return () => ipcRenderer.removeListener(channel, wrapped);
 }
 
 contextBridge.exposeInMainWorld('voiceos', {
   getConfig: () => ipcRenderer.invoke('voiceos:get-config'),
   cancel: () => ipcRenderer.invoke('voiceos:cancel'),
+  requestIdle: () => ipcRenderer.send('voiceos:request-idle'),
   openSettings: () => ipcRenderer.invoke('voiceos:open-settings'),
 
   // PCM is passed as a transferable ArrayBuffer to keep the payload compact.
@@ -32,11 +27,16 @@ contextBridge.exposeInMainWorld('voiceos', {
   setInteractive: (v) => ipcRenderer.send('voiceos:notch-interactive', v),
   startMode: (mode) => ipcRenderer.send('voiceos:start-mode', mode),
 
+  insertText: (text) => ipcRenderer.invoke('voiceos:insert-text', text),
+  copyText: (text) => ipcRenderer.invoke('voiceos:copy-text', text),
+  resolveConfirm: (payload) => ipcRenderer.invoke('voiceos:resolve-confirm', payload),
+
   onSessionIdle: (fn) => on('session-idle', fn),
   onSessionStart: (fn) => on('session-start', fn),
   onSessionStop: (fn) => on('session-stop', fn),
   onSessionCancel: (fn) => on('session-cancel', fn),
   onSessionStage: (fn) => on('session-stage', fn),
   onSessionResult: (fn) => on('session-result', fn),
+  onAgentResult: (fn) => on('agent-result', fn),
   onSessionError: (fn) => on('session-error', fn)
 });

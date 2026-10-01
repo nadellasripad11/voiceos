@@ -8,30 +8,76 @@
   <link rel="stylesheet" href="notch.css" />
 </head>
 <body>
+  <!--
+    The notch. One surface that grows through four states:
+      idle       a quiet pill naming the shortcut
+      listening  live waveform while you speak
+      thinking   the transcript, while the agent works
+      answer     what it found and what it says back
+    It is click-through except over the card itself.
+  -->
   <div class="stage" id="stage" data-state="idle">
-    <div class="pill" id="pill">
-      <div class="glyph" aria-hidden="true">
-        <span class="dot"></span>
-      </div>
+    <div class="card" id="card">
 
-      <div class="body">
-        <div class="row">
-          <span class="mode" id="mode">Dictation</span>
-          <span class="hint" id="hint">Listening…</span>
+      <!-- Always-visible top line -->
+      <div class="bar">
+        <span class="dot" id="dot"></span>
+
+        <div class="bar-main">
+          <span class="label" id="label">VoiceOS</span>
+          <span class="hint" id="hint">Press Ctrl + Shift + Space to dictate</span>
         </div>
-        <canvas id="wave" class="wave" width="640" height="48" aria-hidden="true"></canvas>
-        <div class="transcript" id="transcript"></div>
+
+        <canvas id="wave" class="wave" width="880" height="56" aria-hidden="true"></canvas>
+
+        <span class="timer" id="timer"></span>
+        <button class="close" id="close" title="Dismiss (Esc)" aria-label="Dismiss">
+          <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true">
+            <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+          </svg>
+        </button>
       </div>
 
-      <div class="meta">
-        <span class="timer" id="timer">0.0s</span>
-        <button class="cancel" id="cancel" title="Cancel (Esc)" aria-label="Cancel">esc</button>
-      </div>
-    </div>
+      <!-- Everything below only exists once there is something to show -->
+      <div class="body" id="body">
+        <div class="asked" id="asked">
+          <span class="eyebrow">You said</span>
+          <p class="asked-text" id="askedText"></p>
+        </div>
 
-    <div class="toast" id="toast" hidden>
-      <strong id="toastTitle"></strong>
-      <span id="toastDetail"></span>
+        <div class="answer" id="answer">
+          <span class="eyebrow">Answer</span>
+          <div class="answer-text" id="answerText"></div>
+        </div>
+
+        <div class="found" id="found" hidden>
+          <span class="eyebrow">Found</span>
+          <ul class="found-list" id="foundList"></ul>
+        </div>
+
+        <div class="confirm" id="confirm" hidden>
+          <div class="confirm-head">
+            <span class="confirm-icon" aria-hidden="true">!</span>
+            <div>
+              <strong id="confirmTitle"></strong>
+              <p id="confirmDetail"></p>
+            </div>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn btn-quiet" data-act="cancel">Cancel</button>
+            <button class="btn btn-go" data-act="approve" id="confirmGo">Do it</button>
+          </div>
+        </div>
+
+        <div class="actions" id="actions">
+          <button class="chip" data-act="insert">Insert</button>
+          <button class="chip" data-act="copy">Copy</button>
+          <button class="chip" data-act="again">Ask again</button>
+          <span class="spacer"></span>
+          <span class="meta" id="meta"></span>
+        </div>
+      </div>
+
     </div>
   </div>
 

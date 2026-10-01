@@ -58,6 +58,31 @@ const WATCHDOG_MS = 90000;
 
 let session = { phase: PHASE.IDLE, mode: null, startedAt: 0, abort: null, watchdog: null };
 
+/**
+ * Confirmations awaiting the user's decision in the notch, keyed by id.
+ * Agent Mode parks a promise here before running anything consequential.
+ */
+const pendingConfirms = new Map();
+
+/** Asks the user to approve an action and resolves with their answer. */
+function requestConfirmation({ title, detail, timeoutMs = 120000 }) {
+  const id = `confirm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      // No answer means no action. Defaulting to "yes" on a timeout would be
+      // exactly the wrong failure mode for something that sends or deletes.
+      if (pendingConfirms.delete(id)) {
+        logger.warn(`confirmation ${id} timed out; treating as declined`);
+        resolve(false);
+      }
+    }, timeoutMs);
+    pendingConfirms.set(id, {
+      resolve: (v) => { clearTimeout(timer); resolve(v); }
+    });
+    broadcast('agent-confirm', { id, title, detail });
+  });
+}
+
 function resetSession(reason) {
   if (session.watchdog) clearTimeout(session.watchdog);
   if (reason && session.phase !== PHASE.IDLE) {
@@ -174,8 +199,8 @@ function reloadServices() {
 
 // --- Windows --------------------------------------------------------------
 
-const NOTCH_WIDTH = 420;
-const NOTCH_HEIGHT = 132;
+const NOTCH_WIDTH = 600;
+const NOTCH_HEIGHT = 520;
 
 function createNotch() {
   if (windows.notch && !windows.notch.isDestroyed()) return windows.notch;
@@ -227,9 +252,11 @@ function positionNotch() {
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const { x, y, width, height } = display.workArea;
-  const position = config.get('ui.notchPosition', 'bottom');
+  const position = config.get('ui.notchPosition', 'top');
   const left = Math.round(x + (width - NOTCH_WIDTH) / 2);
-  const top = position === 'top' ? y + 24 : y + height - NOTCH_HEIGHT - 48;
+  // The window is tall so the card can grow downward into an answer panel;
+  // at the top it hugs the edge, at the bottom it is anchored to the bottom.
+  const top = position === 'top' ? y + 8 : y + height - NOTCH_HEIGHT - 8;
   win.setBounds({ x: left, y: top, width: NOTCH_WIDTH, height: NOTCH_HEIGHT });
 }
 
@@ -662,6 +689,24 @@ function registerIpc() {
     // field could never receive typing.
     win.setIgnoreMouseEvents(!interactive, { forward: true });
     win.setFocusable(Boolean(interactive));
+  });
+
+  ipcMain.handle('voiceos:insert-text', async (_e, text) => {
+    await services.bridge.insertText(String(text || ''), { mode: config.get('dictation.insertMode') });
+    return { ok: true };
+  });
+
+  ipcMain.on('voiceos:request-idle', () => idleNotch());
+
+  // Resolves a pending Agent confirmation. The agent loop awaits this before
+  // anything that sends, creates or changes is allowed to run.
+  ipcMain.handle('voiceos:resolve-confirm', (_e, { id, approved }) => {
+    const pending = pendingConfirms.get(id);
+    if (!pending) return { ok: false, reason: 'no such confirmation' };
+    pendingConfirms.delete(id);
+    pending.resolve(Boolean(approved));
+    logger.info(`confirmation ${id} ${approved ? 'approved' : 'declined'}`);
+    return { ok: true };
   });
 
   ipcMain.handle('voiceos:copy-text', async (_e, text) => {

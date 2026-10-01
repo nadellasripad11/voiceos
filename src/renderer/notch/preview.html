@@ -4,135 +4,217 @@
   <meta charset="utf-8" />
   <title>VoiceOS notch — preview</title>
   <style>
-    /* A photographic backdrop so the glass surface can actually be judged;
-       the real overlay floats over whatever the user is working in. */
     html, body { margin: 0; height: 100%; }
     body {
-      display: grid;
-      place-items: end center;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
       background:
-        radial-gradient(1200px 600px at 20% 10%, #cfe3ff 0%, transparent 60%),
-        radial-gradient(900px 500px at 80% 30%, #ffd9e3 0%, transparent 55%),
-        linear-gradient(160deg, #eaf2ff 0%, #f7f8fb 50%, #e9edf5 100%);
+        radial-gradient(1000px 520px at 22% 12%, #d9e8ff 0%, transparent 60%),
+        radial-gradient(820px 460px at 82% 26%, #ffdde7 0%, transparent 56%),
+        linear-gradient(165deg, #eef4ff 0%, #fafbfd 52%, #e9eef6 100%);
       font-family: -apple-system, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
     }
-    .backdrop-text {
-      position: fixed; inset: 0; padding: 60px 80px;
-      color: #9aa4b2; font-size: 15px; line-height: 2; max-width: 820px;
-      user-select: none; pointer-events: none;
-    }
-    .frame { width: 420px; height: 132px; margin-bottom: 48px; }
     .controls {
-      position: fixed; top: 20px; right: 24px; display: flex; gap: 6px; flex-wrap: wrap;
-      max-width: 320px; justify-content: flex-end;
+      position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+      background: rgba(255,255,255,.9); padding: 8px; border-radius: 999px;
+      box-shadow: 0 6px 24px rgba(15,23,42,.12); z-index: 10;
     }
     .controls button {
-      font: inherit; font-size: 12px; padding: 5px 11px; cursor: pointer;
+      font: inherit; font-size: 12px; padding: 6px 13px; cursor: pointer;
       background: #fff; color: #374151;
-      border: 1px solid #e5e7eb; border-radius: 9999px;
-      box-shadow: 0 1px 2px rgba(15,23,42,.06);
+      border: 1px solid #e5e7eb; border-radius: 999px;
     }
     .controls button:hover { background: #f9fafb; }
+    .controls button.on { background: #111827; color: #fff; border-color: #111827; }
+    iframe { width: 600px; height: 520px; border: 0; }
   </style>
 </head>
 <body>
-  <div class="backdrop-text">
-    Pretend this is an email you are writing. The overlay sits above whatever you
-    are working in, never takes focus, and dissolves when it is done. Use the
-    buttons to step through each state.
-  </div>
+  <iframe id="frame" src="index.html" scrolling="no"></iframe>
 
   <div class="controls">
-    <button data-state="listening">listening</button>
-    <button data-state="transcribing">transcribing</button>
-    <button data-state="polishing">polishing</button>
-    <button data-state="inserting">inserting</button>
-    <button data-state="done">done</button>
-    <button data-state="error">error</button>
+    <button data-s="idle">idle</button>
+    <button data-s="listening">listening</button>
+    <button data-s="thinking">thinking</button>
+    <button data-s="dictation">dictation result</button>
+    <button data-s="agent">agent answer</button>
+    <button data-s="confirm">needs approval</button>
+    <button data-s="error">error</button>
   </div>
 
-  <iframe class="frame" id="frame" src="index.html" frameborder="0" scrolling="no"></iframe>
-
   <script>
-    // The overlay normally receives its state over IPC. Here we reach into the
-    // frame and drive the same DOM the real renderer drives.
     const frame = document.getElementById('frame');
-    const LABELS = {
-      listening: 'Listening…',
-      transcribing: 'Transcribing…',
-      polishing: 'Polishing…',
-      inserting: 'Inserting…',
-      done: 'Inserted in 1638ms',
-      error: 'No microphone'
-    };
-    const TEXT = 'Send an email to David about the project update.';
-
     let waveTimer = null;
 
-    function apply(state) {
-      const doc = frame.contentDocument;
-      const stage = doc.getElementById('stage');
-      stage.dataset.state = state;
-      doc.getElementById('mode').textContent = 'Dictation';
-      doc.getElementById('hint').textContent = LABELS[state];
-      doc.getElementById('transcript').textContent =
-        state === 'done' ? TEXT : state === 'polishing' ? TEXT.toLowerCase() : '';
-      doc.getElementById('timer').textContent = state === 'listening' ? '2.4s' : '3.1s';
+    function doc() { return frame.contentDocument; }
 
-      const toast = doc.getElementById('toast');
-      if (state === 'error') {
-        doc.getElementById('toastTitle').textContent = 'Microphone unavailable';
-        doc.getElementById('toastDetail').textContent =
-          'Allow access in Windows Settings → Privacy → Microphone.';
-        toast.hidden = false;
-      } else {
-        toast.hidden = true;
+    function setState(state) {
+      doc().getElementById('stage').dataset.state = state;
+    }
+
+    function clearBody() {
+      const d = doc();
+      d.getElementById('asked').classList.remove('has-content');
+      d.getElementById('answer').classList.remove('has-content');
+      d.getElementById('found').hidden = true;
+      d.getElementById('confirm').hidden = true;
+      d.getElementById('foundList').innerHTML = '';
+      d.getElementById('meta').textContent = '';
+    }
+
+    function setAnswer(text) {
+      const d = doc();
+      const box = d.getElementById('answerText');
+      box.innerHTML = '';
+      for (const para of text.split(/\n{2,}/)) {
+        const p = d.createElement('p');
+        p.textContent = para.trim();
+        box.appendChild(p);
       }
+      d.getElementById('answer').classList.add('has-content');
+    }
 
-      // Animate the bars so the waveform can be judged in motion.
+    function setAsked(text) {
+      const d = doc();
+      d.getElementById('askedText').textContent = text;
+      d.getElementById('asked').classList.add('has-content');
+    }
+
+    function setFound(items) {
+      const d = doc();
+      const list = d.getElementById('foundList');
+      list.innerHTML = '';
+      for (const it of items) {
+        const li = d.createElement('li');
+        li.className = 'found-item';
+        li.innerHTML = it.icon
+          ? `<img class="found-icon" src="../shared/icons/${it.icon}" alt="" />`
+          : `<span class="found-glyph">${it.glyph || '•'}</span>`;
+        const main = d.createElement('div');
+        main.className = 'found-main';
+        main.innerHTML = `<div class="found-title"></div><div class="found-sub"></div>`;
+        main.querySelector('.found-title').textContent = it.title;
+        main.querySelector('.found-sub').textContent = it.subtitle || '';
+        li.appendChild(main);
+        list.appendChild(li);
+      }
+      d.getElementById('found').hidden = items.length === 0;
+    }
+
+    function wave(active) {
       clearInterval(waveTimer);
-      const canvas = doc.getElementById('wave');
+      const d = doc();
+      const canvas = d.getElementById('wave');
       const ctx = canvas.getContext('2d');
-      const BARS = 56;
+      const BARS = 44;
       const levels = new Array(BARS).fill(0);
-      const active = state === 'listening';
-
       waveTimer = setInterval(() => {
-        levels.push(active ? Math.random() * 0.85 + 0.1 : 0.05);
+        levels.push(active ? Math.random() * 0.8 + 0.12 : 0.04);
         levels.shift();
         const { width, height } = canvas;
         ctx.clearRect(0, 0, width, height);
-        const bw = width / BARS;
-        const mid = height / 2;
+        const bw = width / BARS, mid = height / 2;
         for (let i = 0; i < BARS; i++) {
-          const h = Math.max(2, levels[i] * height * 0.95);
-          const a = 0.3 + levels[i] * 0.7;
-          ctx.fillStyle = active
-            ? `rgba(251, 66, 104, ${a.toFixed(3)})`
-            : `rgba(107, 114, 128, ${(a * 0.8).toFixed(3)})`;
-          const x = i * bw + bw * 0.22;
-          const w = bw * 0.56;
-          const r = Math.min(w / 2, h / 2, bw * 0.28);
+          const h = Math.max(3, levels[i] * height * 0.92);
+          const x = i * bw + bw * 0.26, w = bw * 0.48;
+          const r = Math.min(w / 2, h / 2);
+          ctx.fillStyle = `rgba(251,66,104,${(0.28 + levels[i] * 0.72).toFixed(3)})`;
           ctx.beginPath();
           ctx.moveTo(x + r, mid - h / 2);
           ctx.arcTo(x + w, mid - h / 2, x + w, mid + h / 2, r);
           ctx.arcTo(x + w, mid + h / 2, x, mid + h / 2, r);
           ctx.arcTo(x, mid + h / 2, x, mid - h / 2, r);
           ctx.arcTo(x, mid - h / 2, x + w, mid - h / 2, r);
-          ctx.closePath();
-          ctx.fill();
+          ctx.closePath(); ctx.fill();
         }
       }, 70);
     }
 
+    const SCENES = {
+      idle() {
+        clearBody(); wave(false);
+        doc().getElementById('label').textContent = 'VoiceOS';
+        doc().getElementById('hint').textContent = 'Press Ctrl + Shift + Space to dictate';
+        doc().getElementById('timer').textContent = '';
+        setState('idle');
+      },
+      listening() {
+        clearBody(); wave(true);
+        doc().getElementById('label').textContent = 'Agent';
+        doc().getElementById('hint').textContent = 'Listening…';
+        doc().getElementById('timer').textContent = '2.4s';
+        setState('listening');
+      },
+      thinking() {
+        clearBody(); wave(false);
+        doc().getElementById('label').textContent = 'Agent';
+        doc().getElementById('hint').textContent = 'Thinking…';
+        doc().getElementById('timer').textContent = '';
+        setState('thinking');
+        setAsked('What do I have due this week in Canvas?');
+      },
+      dictation() {
+        clearBody(); wave(false);
+        doc().getElementById('label').textContent = 'Dictation';
+        doc().getElementById('hint').textContent = 'Inserted';
+        doc().getElementById('timer').textContent = '';
+        setState('answer');
+        setAnswer('Send David the project update tomorrow, and ask whether the migration is still blocked.');
+        doc().getElementById('meta').textContent = '1638ms · ggml-tiny.en-q5_1.bin · chrome';
+      },
+      agent() {
+        clearBody(); wave(false);
+        doc().getElementById('label').textContent = 'Agent';
+        doc().getElementById('hint').textContent = '';
+        doc().getElementById('timer').textContent = '';
+        setState('answer');
+        setAsked('What do I have due this week?');
+        setAnswer('You have three things due before Friday.\n\nThe Physics lab report is the closest — it is due tomorrow at 11:59pm and has not been submitted yet. The other two are later in the week and both accept late work.');
+        setFound([
+          { icon: 'canvas.webp', title: 'Lab Report 4 — Physics 1112', subtitle: 'Due tomorrow, 11:59 PM · not submitted' },
+          { icon: 'canvas.webp', title: 'Problem Set 7 — Calculus II', subtitle: 'Due Thursday · accepts late work' },
+          { glyph: '🎒', title: 'Reading response — History 2110', subtitle: 'Due Friday · Google Classroom' }
+        ]);
+        doc().getElementById('meta').textContent = '2.1s · qwen2.5:7b-instruct';
+      },
+      confirm() {
+        SCENES.agent();
+        const d = doc();
+        d.getElementById('confirmTitle').textContent = 'Send this email to David?';
+        d.getElementById('confirmDetail').textContent =
+          'To: david@company.com — "Project update: the migration is still blocked on the auth rewrite…"';
+        d.getElementById('confirm').hidden = false;
+        d.getElementById('asked').classList.remove('has-content');
+        setFound([]);
+        setAnswer('I drafted the update and it is ready to send.');
+      },
+      error() {
+        clearBody(); wave(false);
+        doc().getElementById('label').textContent = 'Microphone unavailable';
+        doc().getElementById('hint').textContent = '';
+        doc().getElementById('timer').textContent = '';
+        setState('error');
+        setAnswer('Permission was denied. Allow it in Windows Settings › Privacy › Microphone.');
+      }
+    };
+
     frame.addEventListener('load', () => {
-      // The real renderer expects an IPC bridge; stub it so it does not throw.
+      // The real renderer expects an IPC bridge; stub it so nothing throws.
       frame.contentWindow.voiceos = new Proxy({}, { get: () => () => () => {} });
-      apply('listening');
+      SCENES.agent();
+      mark('agent');
     });
 
+    function mark(name) {
+      for (const b of document.querySelectorAll('.controls button')) {
+        b.classList.toggle('on', b.dataset.s === name);
+      }
+    }
+
     for (const b of document.querySelectorAll('.controls button')) {
-      b.addEventListener('click', () => apply(b.dataset.state));
+      b.addEventListener('click', () => { SCENES[b.dataset.s](); mark(b.dataset.s); });
     }
   </script>
 </body>

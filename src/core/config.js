@@ -107,7 +107,7 @@ const DEFAULTS = {
 
   ui: {
     theme: 'system',
-    notchPosition: 'bottom',      // bottom | top
+    notchPosition: 'top',         // top | bottom
     showWaveform: true,
     alwaysShowNotch: true,        // the overlay is a permanent fixture, not per-dictation
     showHistoryRail: true,        // thin strip on the left edge of the screen
