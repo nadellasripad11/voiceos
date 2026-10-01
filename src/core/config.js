@@ -109,6 +109,8 @@ const DEFAULTS = {
     theme: 'system',
     notchPosition: 'bottom',      // bottom | top
     showWaveform: true,
+    alwaysShowNotch: true,        // the overlay is a permanent fixture, not per-dictation
+    showHistoryRail: true,        // thin strip on the left edge of the screen
     soundEffects: true,
     language: 'en',
     launchAtLogin: false

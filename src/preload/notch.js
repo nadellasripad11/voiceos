@@ -29,7 +29,10 @@ contextBridge.exposeInMainWorld('voiceos', {
     ipcRenderer.invoke('voiceos:submit-audio', { pcm, sampleRate, mode }),
 
   reportLevel: (level) => ipcRenderer.send('voiceos:level', level),
+  setInteractive: (v) => ipcRenderer.send('voiceos:notch-interactive', v),
+  startMode: (mode) => ipcRenderer.send('voiceos:start-mode', mode),
 
+  onSessionIdle: (fn) => on('session-idle', fn),
   onSessionStart: (fn) => on('session-start', fn),
   onSessionStop: (fn) => on('session-stop', fn),
   onSessionCancel: (fn) => on('session-cancel', fn),

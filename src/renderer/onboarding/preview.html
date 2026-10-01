@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Onboarding preview</title></head><body>
+<!-- Development preview: loads the real markup and script with a stubbed bridge. -->
+<script>
+window.voiceos = {
+  getConfig: async () => ({ hotkeys: { dictationToggle: 'Control+Shift+Space', agentToggle: 'Control+Alt+Space' } }),
+  status: async () => ({
+    hotkeys: { dictation: 'Control+Shift+Space', agent: 'Control+Alt+A', edit: 'Control+Shift+E' },
+    stt: { model: 'C:/models/ggml-tiny.en-q5_1.bin' }
+  }),
+  apps: async () => ({
+    official: [
+      { id:'spotify', name:'Spotify', icon:'spotify.webp', auth:'none', available:true, enabled:true },
+      { id:'slack', name:'Slack', icon:'slack.webp', auth:'token', available:true, enabled:false },
+      { id:'gmail', name:'Gmail', icon:'gmail.webp', auth:'oauth', available:true, enabled:false },
+      { id:'notion', name:'Notion', icon:'notion.webp', auth:'token', available:true, enabled:false },
+      { id:'canvas', name:'Canvas', icon:'canvas.webp', auth:'token', available:true, enabled:false },
+      { id:'obsidian', name:'Obsidian', icon:'obsidian.webp', auth:'local', available:true, enabled:false },
+      { id:'linear', name:'Linear', icon:'linear.webp', auth:'token', available:true, enabled:false },
+      { id:'google-drive', name:'Google Drive', icon:'google-drive.webp', auth:'oauth', available:true, enabled:false }
+    ],
+    extras: [
+      { id:'system', name:'This PC', glyph:'🖥️', auth:'none', available:true, enabled:true },
+      { id:'web-search', name:'Web Search', glyph:'🔍', auth:'none', available:true, enabled:true },
+      { id:'whatsapp', name:'WhatsApp', glyph:'💬', auth:'browser', available:true, enabled:false },
+      { id:'files', name:'File Explorer', glyph:'📁', auth:'local', available:true, enabled:false },
+      { id:'google-classroom', name:'Google Classroom', glyph:'🎒', auth:'oauth', available:true, enabled:false },
+      { id:'youtube', name:'YouTube', glyph:'▶️', auth:'none', available:true, enabled:false }
+    ]
+  }),
+  setAppEnabled: async () => ({ ok: true }),
+  completeOnboarding: async () => alert('onboarding complete'),
+  onSessionResult: () => () => {}
+};
+</script>
+<script>
+(async () => {
+  const html = await (await fetch('index.html')).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const l of doc.querySelectorAll('link[rel="stylesheet"]')) document.head.appendChild(l.cloneNode(true));
+  document.body.innerHTML = doc.body.innerHTML;
+  const sc = document.createElement('script');
+  sc.src = 'onboarding.js';
+  document.body.appendChild(sc);
+})();
+</script>
+</body></html>

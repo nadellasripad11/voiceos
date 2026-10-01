@@ -37,7 +37,9 @@ const services = {
 
 const windows = {
   notch: null,
-  settings: null
+  settings: null,
+  rail: null,
+  onboarding: null
 };
 
 let tray = null;
@@ -73,7 +75,7 @@ function armWatchdog() {
       detail: 'No audio arrived. Check that a microphone is connected and permitted.'
     });
     resetSession('watchdog');
-    setTimeout(hideNotch, 2500);
+    setTimeout(idleNotch, 2500);
   }, WATCHDOG_MS);
 }
 
@@ -207,7 +209,10 @@ function createNotch() {
 
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  win.setIgnoreMouseEvents(false);
+  // The overlay is on screen permanently, so it must not swallow clicks aimed
+  // at whatever is underneath. forward: true still delivers mouse movement to
+  // the renderer, which asks for input only while the pointer is on the pill.
+  win.setIgnoreMouseEvents(true, { forward: true });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'notch', 'index.html'));
 
   win.on('closed', () => { windows.notch = null; });
@@ -236,8 +241,106 @@ function showNotch() {
   win.showInactive();
 }
 
-function hideNotch() {
-  if (windows.notch && !windows.notch.isDestroyed()) windows.notch.hide();
+/**
+ * Returns the overlay to its resting state.
+ *
+ * The notch is a permanent fixture while VoiceOS runs rather than something
+ * that appears per dictation, so this collapses it back to the idle pill
+ * instead of hiding the window. It is only actually hidden when the user turns
+ * the overlay off in Settings.
+ */
+function idleNotch() {
+  if (!windows.notch || windows.notch.isDestroyed()) return;
+  if (!config.get('ui.alwaysShowNotch', true)) {
+    windows.notch.hide();
+    return;
+  }
+  positionNotch();
+  windows.notch.showInactive();
+  broadcast('session-idle', { hotkeys: activeHotkeys });
+}
+
+function hideNotch() { idleNotch(); }
+
+const RAIL_WIDTH = 340;
+
+/**
+ * The left-edge history rail.
+ *
+ * Spans the full height of the screen and is wide enough for the open panel,
+ * but starts click-through so it never blocks the app underneath. The renderer
+ * asks for input only while the panel is open.
+ */
+function createRail() {
+  if (windows.rail && !windows.rail.isDestroyed()) return windows.rail;
+
+  const display = screen.getPrimaryDisplay();
+  const { x, y, height } = display.workArea;
+
+  const win = new BrowserWindow({
+    x,
+    y,
+    width: RAIL_WIDTH,
+    height,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    focusable: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'rail.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // forward: true keeps delivering mouse movement to the renderer while clicks
+  // pass through, which is what lets the strip notice the pointer.
+  win.setIgnoreMouseEvents(true, { forward: true });
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'rail', 'index.html'));
+
+  win.on('closed', () => { windows.rail = null; });
+  windows.rail = win;
+  return win;
+}
+
+function showRail() {
+  if (!config.get('ui.showHistoryRail', true)) return;
+  const win = createRail();
+  win.showInactive();
+}
+
+function createOnboarding() {
+  if (windows.onboarding && !windows.onboarding.isDestroyed()) {
+    windows.onboarding.show();
+    windows.onboarding.focus();
+    return windows.onboarding;
+  }
+  const win = new BrowserWindow({
+    width: 720,
+    height: 760,
+    minWidth: 620,
+    minHeight: 620,
+    title: 'Welcome to VoiceOS',
+    backgroundColor: '#f6f9ff',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'onboarding.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      autoplayPolicy: 'no-user-gesture-required'
+    }
+  });
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'onboarding', 'index.html'));
+  win.on('closed', () => { windows.onboarding = null; });
+  windows.onboarding = win;
+  return win;
 }
 
 function createSettings() {
@@ -348,7 +451,7 @@ function startSession(mode) {
       message: 'Speech engine not installed',
       detail: status.problems.join(' ')
     });
-    setTimeout(hideNotch, 4000);
+    setTimeout(idleNotch, 4000);
     return;
   }
   session = {
@@ -377,7 +480,7 @@ function cancelSession() {
   if (session.abort) session.abort.abort();
   resetSession('cancelled');
   broadcast('session-cancel', {});
-  hideNotch();
+  idleNotch();
   logger.info('session cancelled');
 }
 
@@ -444,7 +547,7 @@ function registerIpc() {
       return { ok: false, reason: err.message };
     } finally {
       resetSession('finished');
-      setTimeout(hideNotch, 1400);
+      setTimeout(idleNotch, 2200);
     }
   });
 
@@ -531,6 +634,40 @@ function registerIpc() {
   });
 
   ipcMain.handle('voiceos:open-settings', () => { createSettings(); return { ok: true }; });
+
+  ipcMain.handle('voiceos:complete-onboarding', () => {
+    config.set('onboarded', true);
+    if (windows.onboarding && !windows.onboarding.isDestroyed()) windows.onboarding.close();
+    createSettings();
+    return { ok: true };
+  });
+
+  ipcMain.handle('voiceos:open-onboarding', () => { createOnboarding(); return { ok: true }; });
+
+  ipcMain.on('voiceos:notch-interactive', (_e, interactive) => {
+    const win = windows.notch;
+    if (!win || win.isDestroyed()) return;
+    // Never made focusable: the user's own text field must keep focus.
+    win.setIgnoreMouseEvents(!interactive, { forward: true });
+  });
+
+  ipcMain.on('voiceos:start-mode', (_e, mode) => {
+    toggleSession(mode || 'dictation');
+  });
+
+  ipcMain.on('voiceos:rail-interactive', (_e, interactive) => {
+    const win = windows.rail;
+    if (!win || win.isDestroyed()) return;
+    // Taking input requires the window to be focusable, otherwise the search
+    // field could never receive typing.
+    win.setIgnoreMouseEvents(!interactive, { forward: true });
+    win.setFocusable(Boolean(interactive));
+  });
+
+  ipcMain.handle('voiceos:copy-text', async (_e, text) => {
+    await services.bridge.writeClipboard(String(text || ''));
+    return { ok: true };
+  });
 
   ipcMain.handle('voiceos:apps', () => {
     const catalog = require('../core/apps/catalog');
@@ -623,6 +760,7 @@ function buildTray() {
       { label: `Edit selection  (${keys.editToggle})`, click: () => toggleSession('edit') },
       { type: 'separator' },
       { label: 'Settings…', click: () => createSettings() },
+      { label: 'Run setup again…', click: () => createOnboarding() },
       { label: 'Open data folder', click: () => shell.openPath(paths.userData) },
       { label: 'Open logs', click: () => shell.openPath(paths.logs) },
       { type: 'separator' },
@@ -648,6 +786,9 @@ if (!app.requestSingleInstanceLock()) {
     registerHotkeys();
     buildTray();
     createNotch();
+    showRail();
+    // The overlay is visible from launch, not only while dictating.
+    setTimeout(idleNotch, 600);
 
     // Microphone access for our own windows only.
     const session_ = require('electron').session;
@@ -655,10 +796,7 @@ if (!app.requestSingleInstanceLock()) {
       callback(permission === 'media' || permission === 'audioCapture');
     });
 
-    if (!config.get('onboarded')) {
-      createSettings();
-      config.set('onboarded', true);
-    }
+    if (!config.get('onboarded')) createOnboarding();
 
     logger.info(`VoiceOS ${app.getVersion()} ready`);
   });

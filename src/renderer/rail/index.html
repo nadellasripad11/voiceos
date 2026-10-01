@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;" />
+  <title>VoiceOS History</title>
+  <link rel="stylesheet" href="rail.css" />
+</head>
+<body>
+  <!--
+    The history rail. A thin black strip pinned to the left edge of the screen;
+    hovering it slides out a panel of everything you have dictated. The window
+    itself is click-through except over the strip and the open panel, so it
+    never gets in the way of whatever you are working in.
+  -->
+  <div class="rail" id="rail" data-open="false">
+    <div class="strip" id="strip" aria-label="VoiceOS history">
+      <span class="strip-grip"></span>
+    </div>
+
+    <section class="panel" id="panel">
+      <header class="panel-head">
+        <div>
+          <h1>History</h1>
+          <p id="subtitle">Everything you have dictated</p>
+        </div>
+        <button class="pin" id="pin" title="Keep open">Pin</button>
+      </header>
+
+      <input type="search" id="search" placeholder="Search…" autocomplete="off" />
+
+      <div class="stats" id="stats"></div>
+      <div class="list" id="list"></div>
+
+      <footer class="panel-foot">
+        <button class="link" id="openApp">Open VoiceOS</button>
+      </footer>
+    </section>
+  </div>
+
+  <script src="rail.js"></script>
+</body>
+</html>

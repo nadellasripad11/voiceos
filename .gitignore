@@ -6,3 +6,8 @@ models/
 .DS_Store
 userdata/
 .env
+.preview-*.png
+.notch*.png
+.rail.png
+.idle-notch.png
+.onboard-live.png

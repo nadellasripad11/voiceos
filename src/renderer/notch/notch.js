@@ -354,6 +354,25 @@ function describeMicError(err) {
 
 // --- Wiring ---------------------------------------------------------------
 
+window.voiceos.onSessionIdle(({ hotkeys } = {}) => {
+  teardownCapture();
+  stopTimer();
+  hideToast();
+  el.transcript.textContent = '';
+  el.timer.textContent = '';
+  el.mode.textContent = 'VoiceOS';
+  const key = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift+Space';
+  el.hint.textContent = `Press ${prettyKey(key)} to dictate`;
+  setState('idle');
+});
+
+/** Turns an Electron accelerator into something readable on the pill. */
+function prettyKey(accelerator) {
+  return String(accelerator)
+    .replace(/CommandOrControl|Control/g, 'Ctrl')
+    .replace(/\+/g, ' + ');
+}
+
 window.voiceos.onSessionStart(({ mode, config }) => {
   startCapture(mode, config);
 });
@@ -395,6 +414,36 @@ window.voiceos.onSessionError(({ message, detail }) => {
 
 el.cancel.addEventListener('click', () => {
   window.voiceos.cancel();
+});
+
+// --- Pointer passthrough ---------------------------------------------------
+// The window covers a strip of the screen permanently, so it only takes mouse
+// input while the pointer is actually over the pill. Everywhere else, clicks
+// fall through to the app underneath.
+const pillEl = document.getElementById('pill');
+let interactive = false;
+
+function setInteractive(next) {
+  if (interactive === next) return;
+  interactive = next;
+  window.voiceos.setInteractive(next);
+}
+
+window.addEventListener('mousemove', (e) => {
+  const r = pillEl.getBoundingClientRect();
+  const inside =
+    e.clientX >= r.left && e.clientX <= r.right &&
+    e.clientY >= r.top && e.clientY <= r.bottom;
+  setInteractive(inside);
+});
+
+window.addEventListener('mouseleave', () => setInteractive(false));
+
+// Clicking the resting pill starts dictation, so the overlay is usable without
+// the keyboard.
+pillEl.addEventListener('click', (e) => {
+  if (e.target.closest('.cancel')) return;
+  if (el.stage.dataset.state === 'idle') window.voiceos.startMode('dictation');
 });
 
 // Esc works whenever the overlay happens to have pointer focus; the main

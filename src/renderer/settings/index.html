@@ -151,6 +151,36 @@
       </div>
 
       <div class="card">
+        <h2>Overlay</h2>
+        <label class="toggle"><input type="checkbox" data-key="ui.alwaysShowNotch" /><span>Keep the pill on screen while VoiceOS runs</span></label>
+        <label class="toggle"><input type="checkbox" data-key="ui.showHistoryRail" /><span>Show the history strip on the left edge</span></label>
+        <label class="field">
+          <span>Pill position</span>
+          <select data-key="ui.notchPosition">
+            <option value="bottom">Bottom of screen</option>
+            <option value="top">Top of screen</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="card">
+        <h2>Browser automation</h2>
+        <label class="field">
+          <span>Chrome profile</span>
+          <select data-key="browser.profile">
+            <option value="voiceos">Separate VoiceOS profile</option>
+            <option value="system">My everyday Chrome profile</option>
+          </select>
+        </label>
+        <p class="note">
+          The separate profile leaves your own tabs, cookies and logins untouched;
+          you sign in once per service. Using your everyday profile means you are
+          already signed in everywhere, but <em>Chrome must be closed</em> before
+          VoiceOS can drive it.
+        </p>
+      </div>
+
+      <div class="card">
         <h2>Microphone</h2>
         <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
         <p class="note">Shows your live input level while dictating.</p>

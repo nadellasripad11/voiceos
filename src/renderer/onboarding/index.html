@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;" />
+  <title>Welcome to VoiceOS</title>
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <div class="shell">
+    <div class="progress" id="progress"></div>
+
+    <!-- 1. Welcome -->
+    <section class="step is-active" data-step="welcome">
+      <div class="mark"><span class="mark-dot"></span></div>
+      <h1>Voice assistant<br />at your fingertips</h1>
+      <p class="lede">
+        Speak anywhere you would otherwise type. VoiceOS turns what you say into
+        finished text, and into actions across the apps you already use.
+      </p>
+      <ul class="points">
+        <li><strong>Runs on this machine.</strong> Speech recognition and every action happen locally. There is no server.</li>
+        <li><strong>Costs nothing.</strong> No account, no subscription, no API bills.</li>
+        <li><strong>Works everywhere.</strong> Any app with a normal text field.</li>
+      </ul>
+      <div class="actions">
+        <button class="btn" data-next>Get started</button>
+      </div>
+    </section>
+
+    <!-- 2. Microphone -->
+    <section class="step" data-step="mic">
+      <h1>Let's check your microphone</h1>
+      <p class="lede">Say something out loud. The bar should move.</p>
+
+      <div class="mic-card">
+        <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
+        <div class="mic-state" id="micState">Waiting for permission…</div>
+      </div>
+
+      <p class="note" id="micNote">
+        Windows will ask once. If you miss it, enable the microphone under
+        Settings &rsaquo; Privacy &rsaquo; Microphone.
+      </p>
+
+      <div class="actions">
+        <button class="btn-quiet btn" data-back>Back</button>
+        <button class="btn" data-next id="micNext" disabled>Continue</button>
+      </div>
+    </section>
+
+    <!-- 3. Shortcut -->
+    <section class="step" data-step="shortcut">
+      <h1>Your shortcut</h1>
+      <p class="lede">Press it anywhere to start talking. Press it again to finish.</p>
+
+      <div class="keys">
+        <div class="key-row">
+          <span class="key-label">Dictation</span>
+          <span class="chord" id="chordDictation"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd></span>
+        </div>
+        <div class="key-row">
+          <span class="key-label">Agent</span>
+          <span class="chord" id="chordAgent"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>A</kbd></span>
+        </div>
+      </div>
+
+      <p class="note" id="shortcutNote"></p>
+
+      <div class="actions">
+        <button class="btn-quiet btn" data-back>Back</button>
+        <button class="btn" data-next>Continue</button>
+      </div>
+    </section>
+
+    <!-- 4. Try it -->
+    <section class="step" data-step="try">
+      <h1>Try it now</h1>
+      <p class="lede">
+        Click into the box, press your shortcut, and say a sentence. Pause when
+        you are done and the text appears.
+      </p>
+
+      <textarea id="playground" rows="6" placeholder="Your words will land here…"></textarea>
+
+      <div class="try-meta">
+        <span id="tryStatus">Waiting for your first dictation</span>
+        <button class="link" id="clearPlayground">Clear</button>
+      </div>
+
+      <p class="note">
+        Filler words come out, punctuation goes in. Try: <em>"um so send david the
+        project update tomorrow question mark"</em>
+      </p>
+
+      <div class="actions">
+        <button class="btn-quiet btn" data-back>Back</button>
+        <button class="btn" data-next>Continue</button>
+      </div>
+    </section>
+
+    <!-- 5. Apps -->
+    <section class="step" data-step="apps">
+      <h1>Connect your apps</h1>
+      <p class="lede">
+        Agent Mode acts inside these. Turn on what you use now, or do it later
+        from the App Store.
+      </p>
+      <div class="app-list" id="appList"></div>
+      <div class="actions">
+        <button class="btn-quiet btn" data-back>Back</button>
+        <button class="btn" data-next>Continue</button>
+      </div>
+    </section>
+
+    <!-- 6. Done -->
+    <section class="step" data-step="done">
+      <div class="mark"><span class="mark-dot"></span></div>
+      <h1>You're set</h1>
+      <p class="lede">
+        VoiceOS stays running in the background. The pill at the bottom of your
+        screen shows it is listening, and the strip on the left edge holds
+        everything you have said.
+      </p>
+
+      <div class="summary" id="summary"></div>
+
+      <div class="actions">
+        <button class="btn-quiet btn" data-back>Back</button>
+        <button class="btn" id="finish">Start using VoiceOS</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="onboarding.js"></script>
+</body>
+</html>
