@@ -42,7 +42,8 @@ const DEFAULTS = {
       silenceMs: 1500,
       threshold: 0.008,
       minRecordMs: 1200,
-      maxUtteranceMs: 120000
+      maxUtteranceMs: 1200000,
+      warnAtMs: 1140000
     }
   },
 
@@ -116,7 +117,9 @@ const DEFAULTS = {
     showHistoryRail: true,        // thin strip on the left edge of the screen
     soundEffects: true,
     language: 'en',
-    launchAtLogin: false
+    launchAtLogin: false,
+    startInBackground: false,   // stay in the tray at login rather than opening the window
+    showActiveAppIcon: true     // the pill shows which app your words will land in
   },
 
   browser: {

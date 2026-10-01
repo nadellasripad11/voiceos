@@ -2,59 +2,53 @@
 /**
  * Modifier-only, hold-to-talk hotkeys.
  *
- * Electron's globalShortcut cannot express "Ctrl+Shift" on its own: an
- * accelerator must end in a non-modifier key, and it only fires on press, never
- * on release. Hold-to-talk therefore needs a low-level keyboard hook, which is
- * what uiohook-napi provides.
+ * Hold Ctrl+Shift to dictate, Ctrl+Alt to ask; release to finish.
  *
- * Behaviour: hold both modifiers to speak, release either to finish. Pressing
- * any other key while they are held cancels, so ordinary chords like Ctrl+Shift+T
- * or Ctrl+Alt+Delete pass through untouched and never start a session.
+ * Electron's globalShortcut cannot express this: an accelerator must end in a
+ * non-modifier key and only fires on press, never on release. So this needs a
+ * low-level keyboard hook — and that hook runs in a separate Node process,
+ * because uiohook-napi is built against Node's N-API and faults under Electron
+ * (`uiohook_to_js_event napi_define_properties`) after a handful of events.
+ * Out-of-process, it is reliable, and a crash costs a restarted helper rather
+ * than the whole app.
  */
+const path = require('path');
+const readline = require('readline');
+const { spawn } = require('child_process');
 
-const LEFT = { ctrl: 29, shift: 42, alt: 56 };
-const RIGHT = { ctrl: 3613, shift: 54, alt: 3640 };
-
-/** Maps a raw keycode to the modifier it represents, or null. */
-function modifierFor(keycode) {
-  for (const [name, code] of Object.entries(LEFT)) if (code === keycode) return name;
-  for (const [name, code] of Object.entries(RIGHT)) if (code === keycode) return name;
-  return null;
-}
+const DAEMON = path.join(__dirname, 'hotkey-daemon.js');
 
 class HoldToTalk {
   /**
    * @param {object} opts
    * @param {(mode: string) => void} opts.onStart
    * @param {(mode: string) => void} opts.onStop
-   * @param {object} opts.logger
+   * @param {number} [opts.armMs] how long both modifiers must be held before
+   *   this counts as a hold rather than the start of an ordinary shortcut
    */
   constructor({ onStart, onStop, logger = console, armMs = 220 } = {}) {
-    this.armMs = armMs;
     this.onStart = onStart;
     this.onStop = onStop;
     this.logger = logger;
+    this.armMs = armMs;
 
-    this.hook = null;
+    this.proc = null;
     this.available = false;
     this.running = false;
+    this.restarts = 0;
 
     this.held = new Set();
-    this.activeMode = null;
-    // Set when a non-modifier key is pressed during a hold, so the combination
-    // is treated as an ordinary shortcut rather than a talk gesture.
-    this.poisoned = false;
-    this.armTimer = null;
-
-    // Both modifiers must land close together to count as a deliberate gesture
-    // rather than the tail of some other chord.
     this.pressedAt = new Map();
+    this.activeMode = null;
+    this.armTimer = null;
+    // Set when a real key lands during a hold, so the combination is treated as
+    // an ordinary shortcut rather than a request to talk.
+    this.poisoned = false;
   }
 
-  /** Which mode the currently held modifiers correspond to, if any. */
+  /** The mode the currently held modifiers correspond to, if any. */
   modeForHeld() {
-    const ctrl = this.held.has('ctrl');
-    if (!ctrl) return null;
+    if (!this.held.has('ctrl')) return null;
     if (this.held.has('shift') && !this.held.has('alt')) return 'dictation';
     if (this.held.has('alt') && !this.held.has('shift')) return 'agent';
     return null;
@@ -62,44 +56,86 @@ class HoldToTalk {
 
   start() {
     if (this.running) return true;
-    let uiohook;
+
+    // Deliberately the system Node, not process.execPath: under Electron that
+    // would be electron.exe, which is the environment this helper exists to
+    // avoid.
+    const node = process.platform === 'win32' ? 'node.exe' : 'node';
+
     try {
-      uiohook = require('uiohook-napi');
+      this.proc = spawn(node, [DAEMON], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true
+      });
     } catch (err) {
-      this.logger.warn?.(`[hotkeys] uiohook-napi unavailable (${err.message}); hold-to-talk is off`);
-      this.available = false;
+      this.logger.warn?.(`[hotkeys] could not start the hook helper: ${err.message}`);
       return false;
     }
 
-    this.hook = uiohook.uIOhook;
-    this.available = true;
+    const rl = readline.createInterface({ input: this.proc.stdout });
+    rl.on('line', (line) => this.handleLine(line));
 
-    this.hook.on('keydown', (event) => this.handleDown(event));
-    this.hook.on('keyup', (event) => this.handleUp(event));
+    this.proc.stderr.on('data', (d) => {
+      const text = String(d).trim();
+      if (text) this.logger.debug?.(`[hotkeys:helper] ${text}`);
+    });
 
-    try {
-      this.hook.start();
-      this.running = true;
-      this.logger.info?.('[hotkeys] hold-to-talk active: Ctrl+Shift dictate, Ctrl+Alt ask');
-      return true;
-    } catch (err) {
-      this.logger.error?.(`[hotkeys] could not start the keyboard hook: ${err.message}`);
+    this.proc.on('error', (err) => {
+      this.logger.warn?.(`[hotkeys] hook helper error: ${err.message}`);
       this.available = false;
-      return false;
+      this.running = false;
+    });
+
+    this.proc.on('exit', (code) => {
+      this.running = false;
+      this.proc = null;
+      // Drop any half-finished gesture so a restart cannot resume mid-hold.
+      this.reset();
+      if (this.closing) return;
+
+      // Restart a crashed helper, but give up rather than spinning forever.
+      if (this.restarts < 3) {
+        this.restarts++;
+        this.logger.warn?.(`[hotkeys] hook helper exited (code ${code}); restarting (${this.restarts}/3)`);
+        setTimeout(() => this.start(), 800);
+      } else {
+        this.available = false;
+        this.logger.error?.('[hotkeys] hook helper keeps exiting; hold-to-talk is off');
+      }
+    });
+
+    this.running = true;
+    return true;
+  }
+
+  handleLine(line) {
+    let msg;
+    try { msg = JSON.parse(line); } catch { return; }
+
+    switch (msg.type) {
+      case 'ready':
+        this.available = true;
+        this.restarts = 0;
+        this.logger.info?.('[hotkeys] hold-to-talk active: Ctrl+Shift dictate, Ctrl+Alt ask');
+        break;
+      case 'error':
+        this.available = false;
+        this.logger.warn?.(`[hotkeys] ${msg.message}`);
+        break;
+      case 'mod-down': this.onModDown(msg.mod); break;
+      case 'mod-up': this.onModUp(msg.mod); break;
+      case 'other-key': this.onOtherKey(); break;
+      default: break;
     }
   }
 
-  handleDown(event) {
-    const mod = modifierFor(event.keycode);
+  onOtherKey() {
+    if (this.held.size) this.poisoned = true;
+    this.cancelArm();
+    if (this.activeMode) this.stop('another key was pressed');
+  }
 
-    if (!mod) {
-      // A real key during a hold means this is an ordinary shortcut.
-      if (this.held.size) this.poisoned = true;
-      this.cancelArm();
-      if (this.activeMode) this.stop('another key was pressed');
-      return;
-    }
-
+  onModDown(mod) {
     if (this.held.has(mod)) return; // auto-repeat
     this.held.add(mod);
     this.pressedAt.set(mod, Date.now());
@@ -109,15 +145,15 @@ class HoldToTalk {
     const mode = this.modeForHeld();
     if (!mode) return;
 
-    // Require the two modifiers within a short window of each other.
+    // Both modifiers must land close together to read as one deliberate
+    // gesture rather than the tail of something else.
     const times = [...this.pressedAt.values()];
-    const spread = Math.max(...times) - Math.min(...times);
-    if (spread > 900) return;
+    if (Math.max(...times) - Math.min(...times) > 900) return;
 
-    // Wait before committing. Ctrl+Shift+T delivers its letter within a few
-    // milliseconds; a person holding to speak holds for far longer. Firing
-    // immediately would hijack every Ctrl+Shift and Ctrl+Alt shortcut on the
-    // system, which is worse than a barely perceptible delay.
+    // Arm, do not fire. Committing the moment the second modifier lands would
+    // hijack every Ctrl+Shift and Ctrl+Alt shortcut on the system, because the
+    // letter in Ctrl+Shift+T arrives milliseconds later.
+    this.cancelArm();
     this.armTimer = setTimeout(() => {
       this.armTimer = null;
       if (this.poisoned) return;
@@ -128,19 +164,12 @@ class HoldToTalk {
     }, this.armMs);
   }
 
-  handleUp(event) {
-    const mod = modifierFor(event.keycode);
-    if (!mod) return;
-
+  onModUp(mod) {
     this.held.delete(mod);
     this.pressedAt.delete(mod);
-    // Released before the arming window elapsed: it was a tap, not a hold.
+    // Released before arming elapsed: a tap, not a hold.
     if (this.armTimer && this.modeForHeld() === null) this.cancelArm();
-
-    if (this.activeMode) {
-      // Releasing either modifier ends the utterance.
-      this.stop('released');
-    }
+    if (this.activeMode) this.stop('released');
     if (!this.held.size) this.poisoned = false;
   }
 
@@ -156,10 +185,23 @@ class HoldToTalk {
     try { this.onStop?.(mode); } catch (err) { this.logger.error?.(err.message); }
   }
 
-  shutdown() {
+  reset() {
     this.cancelArm();
-    if (!this.running || !this.hook) return;
-    try { this.hook.stop(); } catch {}
+    this.held.clear();
+    this.pressedAt.clear();
+    this.activeMode = null;
+    this.poisoned = false;
+  }
+
+  shutdown() {
+    this.closing = true;
+    this.cancelArm();
+    if (this.proc) {
+      try { this.proc.stdin.end(); } catch {}
+      const proc = this.proc;
+      setTimeout(() => { try { proc.kill(); } catch {} }, 400);
+      this.proc = null;
+    }
     this.running = false;
   }
 
@@ -173,4 +215,4 @@ class HoldToTalk {
   }
 }
 
-module.exports = { HoldToTalk, modifierFor };
+module.exports = { HoldToTalk };

@@ -118,6 +118,25 @@ html, body {
 [data-state="transcribing"] .wave,
 [data-state="thinking"] .wave { display: block; }
 
+/* Which app the words will land in. Shown while speaking so the destination
+   is never a surprise. */
+.app-badge-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--island-dim);
+  background: var(--island-raised);
+  border-radius: var(--r-pill);
+  padding: 4px 10px 4px 6px;
+  white-space: nowrap;
+}
+.app-badge-pill[hidden] { display: none; }
+.app-badge-pill img { width: 14px; height: 14px; border-radius: 3px; object-fit: contain; }
+.app-badge-pill .g { font-size: 12px; }
+[data-state="idle"] .app-badge-pill { display: none; }
+
 .hint {
   font-size: 12.5px;
   color: var(--island-dim);

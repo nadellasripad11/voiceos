@@ -18,6 +18,7 @@ const el = {
   hint: document.getElementById('hint'),
   wave: document.getElementById('wave'),
   timer: document.getElementById('timer'),
+  appBadge: document.getElementById('appBadge'),
   close: document.getElementById('close'),
   body: document.getElementById('body'),
   askedText: document.getElementById('askedText'),
@@ -274,7 +275,7 @@ function rms(arr) {
 async function startCapture(mode, config) {
   if (capture.stream) return;
   Object.assign(capture, {
-    mode, config, chunks: [], stopping: false, silenceSince: 0, hasSpoken: false
+    mode, config, chunks: [], stopping: false, silenceSince: 0, hasSpoken: false, warned: false
   });
 
   clearBody();
@@ -337,7 +338,17 @@ function maybeAutoStop(level) {
   if (!vad || !vad.enabled) return;
 
   const elapsed = Date.now() - capture.startedAt;
-  if (elapsed > (vad.maxUtteranceMs || 120000)) return finishCapture();
+  const limit = vad.maxUtteranceMs || 1200000;
+
+  // Warn before cutting someone off mid-sentence, then finish and insert what
+  // they said rather than discarding a long session.
+  const warnAt = vad.warnAtMs || Math.max(0, limit - 60000);
+  if (!capture.warned && elapsed > warnAt) {
+    capture.warned = true;
+    const left = Math.max(1, Math.round((limit - elapsed) / 60000));
+    setState('listening', { hint: `Finishing in ${left} minute${left === 1 ? '' : 's'}…` });
+  }
+  if (elapsed > limit) return finishCapture();
 
   if (level >= vad.threshold) {
     capture.hasSpoken = true;
@@ -495,6 +506,7 @@ bridge.onSessionIdle(({ hotkeys, position } = {}) => {
   hideConfirm();
   currentResult = null;
   el.timer.textContent = '';
+  el.appBadge.hidden = true;
   setState('idle', { hint: '' });
 
   // The footer states the chord that actually bound, which is not always the
@@ -510,6 +522,26 @@ bridge.onSessionStart(({ mode, config, position }) => {
   startCapture(mode, config);
 });
 bridge.onSessionStop(() => finishCapture());
+
+bridge.onSessionApp((app) => {
+  if (!app) return;
+  el.appBadge.innerHTML = '';
+  if (app.icon) {
+    const img = document.createElement('img');
+    img.src = '../shared/icons/' + app.icon;
+    img.alt = '';
+    el.appBadge.appendChild(img);
+  } else {
+    const g = document.createElement('span');
+    g.className = 'g';
+    g.textContent = app.glyph || '◻';
+    el.appBadge.appendChild(g);
+  }
+  const name = document.createElement('span');
+  name.textContent = app.name || app.process;
+  el.appBadge.appendChild(name);
+  el.appBadge.hidden = false;
+});
 bridge.onSessionCancel(() => bridge.requestIdle());
 
 bridge.onSessionStage(({ stage }) => {

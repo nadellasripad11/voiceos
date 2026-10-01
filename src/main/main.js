@@ -26,6 +26,7 @@ const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { getBrowser } = require('../core/browser/cdp');
 const { ConnectionManager } = require('../core/connect/manager');
 const { createLogger } = require('./logger');
+const { iconForProcess } = require('../core/apps/process-icons');
 const { HoldToTalk } = require('./hotkeys');
 
 const isDev = process.argv.includes('--dev');
@@ -502,19 +503,27 @@ function registerHotkeys() {
     });
   }
 
-  const ok = holdToTalk.running || holdToTalk.start();
-  if (ok) {
+  const started = holdToTalk.running || holdToTalk.start();
+  if (started) {
     activeHotkeys = { dictation: 'Ctrl+Shift', agent: 'Ctrl+Alt', edit: null };
+    // The helper reports readiness a moment later. If it never does, fall back
+    // rather than leaving the user with no way to talk.
+    setTimeout(() => {
+      if (holdToTalk.available) return;
+      logger.warn('hold-to-talk never came up; falling back to toggle shortcuts');
+      registerFallbackAccelerators();
+    }, 4000);
     return;
   }
+  registerFallbackAccelerators();
+}
 
-  // The keyboard hook could not start, so fall back to accelerators. They need
-  // a real key on the end, and they toggle rather than hold.
-  logger.warn('falling back to toggle shortcuts; hold-to-talk needs the keyboard hook');
-  const fallbacks = [
-    ['dictation', 'Control+Shift+Space'],
-    ['agent', 'Control+Alt+A']
-  ];
+/**
+ * Toggle shortcuts, used only when the keyboard hook is unavailable. These
+ * need a real key on the end and toggle rather than hold.
+ */
+function registerFallbackAccelerators() {
+  const fallbacks = [['dictation', 'Control+Shift+Space'], ['agent', 'Control+Alt+A']];
   activeHotkeys = { dictation: null, agent: null, edit: null };
   for (const [mode, accelerator] of fallbacks) {
     try {
@@ -526,6 +535,8 @@ function registerHotkeys() {
       logger.warn(`could not bind ${mode}: ${err.message}`);
     }
   }
+  broadcast('session-idle', { hotkeys: activeHotkeys, position: config.get('ui.notchPosition', 'top') });
+
 }
 
 function toggleSession(mode) {
@@ -534,6 +545,18 @@ function toggleSession(mode) {
   if (session.phase === PHASE.LISTENING) return stopSession();
   if (session.phase === PHASE.PROCESSING) return;
   return startSession(mode);
+}
+
+/** The app the user's words will land in, for the pill to display. */
+async function activeAppBadge() {
+  if (!config.get('ui.showActiveAppIcon', true)) return null;
+  try {
+    const win = await services.bridge.foregroundWindow();
+    if (!win) return null;
+    return iconForProcess(win.process, win.title);
+  } catch {
+    return null;
+  }
 }
 
 function startSession(mode) {
@@ -558,6 +581,9 @@ function startSession(mode) {
   armWatchdog();
   showNotch();
   broadcast('session-start', { mode, config: config.all(), position: config.get('ui.notchPosition', 'top') });
+  // Resolved after the session starts so reading the window never delays
+  // the moment recording begins.
+  activeAppBadge().then((app) => app && broadcast('session-app', app)).catch(() => {});
   logger.info(`session start: ${mode}`);
 }
 

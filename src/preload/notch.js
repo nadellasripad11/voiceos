@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('voiceos', {
 
   onSessionIdle: (fn) => on('session-idle', fn),
   onSessionStart: (fn) => on('session-start', fn),
+  onSessionApp: (fn) => on('session-app', fn),
   onSessionStop: (fn) => on('session-stop', fn),
   onSessionCancel: (fn) => on('session-cancel', fn),
   onSessionStage: (fn) => on('session-stage', fn),
