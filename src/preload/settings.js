@@ -14,6 +14,14 @@ contextBridge.exposeInMainWorld('voiceos', {
   openPath: (which) => ipcRenderer.invoke('voiceos:open-path', which),
   previewVoice: (text) => ipcRenderer.invoke('voiceos:preview-voice', text),
   apps: () => ipcRenderer.invoke('voiceos:apps'),
+  connections: () => ipcRenderer.invoke('voiceos:connections'),
+  openExternal: (url) => ipcRenderer.invoke('voiceos:open-external', url),
+  connect: (provider, input) => ipcRenderer.invoke('voiceos:connect', { provider, input }),
+  disconnect: (provider, accountId) => ipcRenderer.invoke('voiceos:disconnect', { provider, accountId }),
+  setOauthClient: (provider, clientId, clientSecret) =>
+    ipcRenderer.invoke('voiceos:set-oauth-client', { provider, clientId, clientSecret }),
+  setAppAccount: (appId, key) => ipcRenderer.invoke('voiceos:set-app-account', { appId, key }),
+  pickFolder: (multiple) => ipcRenderer.invoke('voiceos:pick-folder', { multiple }),
   setAppEnabled: (id, enabled) => ipcRenderer.invoke('voiceos:set-app-enabled', { id, enabled }),
 
   onSpeak: (fn) => {

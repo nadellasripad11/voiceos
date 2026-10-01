@@ -24,6 +24,7 @@ const { DictationMode } = require('../core/modes/dictation');
 const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { getBrowser } = require('../core/browser/cdp');
+const { ConnectionManager } = require('../core/connect/manager');
 const { createLogger } = require('./logger');
 const { HoldToTalk } = require('./hotkeys');
 
@@ -39,7 +40,8 @@ const services = {
   dictation: null,
   agent: null,
   tts: null,
-  browser: null
+  browser: null,
+  connections: null
 };
 
 const windows = {
@@ -170,12 +172,21 @@ async function initServices() {
     profile: config.get('browser.profile', 'voiceos'),
     headless: config.get('browser.headless', false)
   });
+  services.connections = new ConnectionManager({
+    config,
+    bridge: services.bridge,
+    browser: services.browser,
+    logger,
+    credentials: { read: readCredentials, write: writeCredentials }
+  });
+
   services.agent = new Agent({
     provider: services.provider,
     config,
     bridge: services.bridge,
     browser: services.browser,
     tts: services.tts,
+    connections: services.connections,
     logger,
     requestConfirmation
   });
@@ -804,6 +815,48 @@ function registerIpc() {
     return { ok: true };
   });
 
+  ipcMain.handle('voiceos:open-external', (_e, url) => {
+    // Only ever a provider's own console, never a URL from model output.
+    if (!String(url).toLowerCase().startsWith('https://')) {
+      throw new Error('Refusing to open a non-https URL');
+    }
+    return shell.openExternal(url);
+  });
+
+  ipcMain.handle('voiceos:connections', () => services.connections.status());
+
+  ipcMain.handle('voiceos:connect', async (_e, { provider, input }) => {
+    try {
+      return await services.connections.connect(provider, input || {});
+    } catch (err) {
+      // A missing client ID is a setup step, not a failure; hand the UI the
+      // instructions so it can walk the user through it.
+      if (err.needsSetup) {
+        return { ok: false, needsSetup: err.needsSetup, provider: err.providerId, error: err.message };
+      }
+      logger.warn(`[connect] ${provider} failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('voiceos:disconnect', (_e, { provider, accountId }) =>
+    services.connections.disconnect(provider, accountId));
+
+  ipcMain.handle('voiceos:set-oauth-client', (_e, { provider, clientId, clientSecret }) =>
+    services.connections.setClient(provider, { clientId, clientSecret }));
+
+  ipcMain.handle('voiceos:set-app-account', (_e, { appId, key }) => {
+    services.connections.accounts.setAppAccount(appId, key);
+    return { ok: true };
+  });
+
+  ipcMain.handle('voiceos:pick-folder', async (_e, { multiple } = {}) => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', ...(multiple ? ['multiSelections'] : [])]
+    });
+    return { cancelled: result.canceled, paths: result.filePaths || [] };
+  });
+
   ipcMain.handle('voiceos:apps', () => {
     const catalog = require('../core/apps/catalog');
     const enabled = config.get('apps', {});
@@ -831,7 +884,8 @@ function registerIpc() {
       available: app.platforms.includes(process.platform),
       actionCount: app.actions.length,
       mutatingCount: app.actions.filter((a) => a.mutating).length,
-      enabled: Boolean(enabled[app.id] && enabled[app.id].enabled)
+      enabled: Boolean(enabled[app.id] && enabled[app.id].enabled),
+      connection: services.connections.appStatus(app.id)
     });
 
     return {

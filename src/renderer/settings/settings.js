@@ -175,8 +175,10 @@ document.getElementById('historySearch')?.addEventListener('input', (e) => {
 
 // --- Apps -----------------------------------------------------------------
 
-async function loadApps() {
+async function loadApps(force) {
+  if (force) appData = null;
   if (!appData) appData = await window.voiceos.apps();
+  connectUI.setApps([...appData.official, ...appData.extras]);
   renderFilters();
   renderApps();
 }
@@ -195,20 +197,33 @@ function appCard(a) {
     ? `<img class="app-icon" src="../shared/icons/${escapeHtml(a.icon)}" alt="" />`
     : `<span class="app-glyph">${a.glyph || '•'}</span>`;
 
-  const foot = a.available
-    ? `<label class="switch"><input type="checkbox" data-app="${escapeHtml(a.id)}" ${a.enabled ? 'checked' : ''} /><span></span></label>`
-    : `<span class="app-platform">${escapeHtml(a.platformLabel)} only${
-        a.windowsEquivalent ? ` · use ${escapeHtml(nameOf(a.windowsEquivalent))}` : ''}</span>`;
+  const c = a.connection || {};
+  let foot;
+
+  if (!a.available) {
+    foot = `<span class="app-platform">${escapeHtml(a.platformLabel)} only${
+      a.windowsEquivalent ? ` · use ${escapeHtml(nameOf(a.windowsEquivalent))}` : ''}</span>`;
+  } else if (!c.needsConnection) {
+    // Nothing to connect: these work the moment the app is switched on.
+    foot = `<span class="app-ready">Ready</span>
+      <label class="switch"><input type="checkbox" data-app="${escapeHtml(a.id)}" ${a.enabled ? 'checked' : ''} /><span></span></label>`;
+  } else if (c.connected) {
+    foot = `<button class="app-account" data-account="${escapeHtml(a.id)}" title="Change account">${escapeHtml(c.account.label)}</button>
+      <label class="switch"><input type="checkbox" data-app="${escapeHtml(a.id)}" ${a.enabled ? 'checked' : ''} /><span></span></label>`;
+  } else {
+    foot = `<button class="app-connect" data-connect="${escapeHtml(a.id)}">Connect</button>`;
+  }
 
   return `
-    <div class="app-card ${a.enabled ? 'is-enabled' : ''} ${a.available ? '' : 'is-unavailable'}">
+    <div class="app-card ${a.enabled && c.connected !== false ? 'is-enabled' : ''} ${a.available ? '' : 'is-unavailable'}">
       <div class="app-head">
         ${icon}
         <span class="app-name">${escapeHtml(a.name)}</span>
         ${a.beta ? '<span class="app-badge">BETA</span>' : ''}
       </div>
       <div class="app-desc">${escapeHtml(a.description)}</div>
-      <div class="app-count">${a.actionCount} voice action${a.actionCount === 1 ? '' : 's'} · ${escapeHtml(a.platformLabel)}</div>
+      <div class="app-count">${a.actionCount} voice action${a.actionCount === 1 ? '' : 's'}${
+        c.sharedWith && c.sharedWith.length ? ` · shares ${escapeHtml(c.providerName)} with ${c.sharedWith.length} more` : ''}</div>
       <div class="app-foot">${foot}</div>
     </div>`;
 }
@@ -241,6 +256,13 @@ document.getElementById('appFilters').addEventListener('click', (e) => {
   activeCategory = chip.dataset.cat;
   renderFilters();
   renderApps();
+});
+
+document.getElementById('appGrid').addEventListener('click', async (e) => {
+  const connect = e.target.closest('[data-connect]');
+  if (connect) return connectUI.start(connect.dataset.connect);
+  const account = e.target.closest('[data-account]');
+  if (account) return connectUI.chooseAccount(account.dataset.account);
 });
 
 document.getElementById('appGrid').addEventListener('change', async (e) => {
@@ -417,6 +439,15 @@ vocabEl?.addEventListener('blur', async () => {
   const terms = vocabEl.value.split('\n').map((s) => s.trim()).filter(Boolean);
   cfg = await window.voiceos.setValue('dictation.vocabulary', terms);
 });
+
+// The connect UI is a separate script. Guard against it being absent so a
+// failure there cannot take the whole Apps panel down with it.
+const connectUI = window.voiceosConnect || {
+  start() {}, chooseAccount() {}, disconnect() {}, close() {},
+  setApps() {}, onChange() {}
+};
+
+connectUI.onChange(() => loadApps(true));
 
 (async () => {
   cfg = await window.voiceos.getConfig();

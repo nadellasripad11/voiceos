@@ -93,6 +93,13 @@
         bridge: { available: true, running: true },
         paths: { userData: 'C:/Users/you/AppData/Roaming/VoiceOS', models: 'models', logs: 'logs' }
       }),
+      connections: async () => ({ providers: {}, accounts: [], appDefaults: {} }),
+      connect: async () => ({ ok: true, label: 'you@gmail.com' }),
+      disconnect: async () => ({ ok: true }),
+      setOauthClient: async () => ({ ok: true }),
+      setAppAccount: async () => ({ ok: true }),
+      pickFolder: async () => ({ cancelled: true, paths: [] }),
+      openExternal: async () => {},
       apps: async () => ({
         official: OFFICIAL.map(([id, name, icon, category, description, actionCount, platforms, beta, auth]) => ({
           id, name, icon, glyph: null, category, description, auth,
@@ -102,14 +109,22 @@
           platforms, platformLabel: label(platforms),
           available: platforms.includes('win32'),
           actionCount, mutatingCount: 0,
-          enabled: ['spotify', 'web-search'].includes(id)
+          enabled: ['spotify', 'web-search'].includes(id),
+          connection: ({
+            gmail: { needsConnection: true, connected: false, provider: 'google', providerName: 'Google', sharedWith: ['google-calendar','google-drive','google-classroom'] },
+            'google-calendar': { needsConnection: true, connected: true, provider: 'google', providerName: 'Google', account: { label: 'you@gmail.com' }, sharedWith: ['gmail','google-drive'] },
+            slack: { needsConnection: true, connected: false, provider: 'slack', providerName: 'Slack', sharedWith: [] },
+            canvas: { needsConnection: true, connected: true, provider: 'canvas', providerName: 'Canvas', account: { label: 'Sripad · gsu.instructure.com' }, sharedWith: [] },
+            spotify: { needsConnection: false, connected: true }
+          })[id] || { needsConnection: true, connected: false, provider: id, providerName: name, sharedWith: [] }
         })),
         extras: EXTRAS.map(([id, name, icon, category, description, actionCount, auth, glyph]) => ({
           id, name, icon, glyph, category, description, auth,
           beta: false, extra: true, replaces: null, windowsEquivalent: null,
           platforms: ['win32'], platformLabel: 'Windows',
           available: true, actionCount, mutatingCount: 0,
-          enabled: ['system', 'web-search'].includes(id)
+          enabled: ['system', 'web-search'].includes(id),
+          connection: { needsConnection: false, connected: true }
         })),
         categories: CATEGORIES,
         summary: { listed: 28, official: 21, runnable: 22 }
@@ -144,9 +159,13 @@
       document.title = doc.title + ' — preview';
       document.body.innerHTML = doc.body.innerHTML;
 
-      const script = document.createElement('script');
-      script.src = 'settings.js';
-      document.body.appendChild(script);
+      // Load the same scripts, in the same order, as index.html does.
+      for (const src of ['connect.js', 'settings.js']) {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false;
+        document.body.appendChild(script);
+      }
     })();
   </script>
 </body>
