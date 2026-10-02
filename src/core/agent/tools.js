@@ -630,13 +630,21 @@ const OPENINGS = {
   search_files: 'Looking through your files.',
   read_screen: 'Reading your screen.',
   point_and_ask: 'Having a look.',
-  now_playing: null,          // instant; an opening line would arrive after it
+  // These three go through the PowerShell bridge, which is not instant: asking
+  // what is playing measured 1557ms before a word was heard. They were silent
+  // on the assumption that an opening line would arrive after the answer,
+  // which the measurement contradicts — and since the fixed phrases are now
+  // rendered at launch, an opening line costs nothing to say.
+  now_playing: 'Let me see.',
+  list_windows: 'Checking what is open.',
+  list_reminders: 'Checking your reminders.',
+
+  // Genuinely immediate, and the result speaks for itself: a window opening or
+  // the music pausing is its own confirmation.
   control_playback: null,
   set_volume: null,
-  list_reminders: null,
   create_reminder: null,
   take_note: null,
-  list_windows: null,
   open_app: null,
   open_url: null
 };
