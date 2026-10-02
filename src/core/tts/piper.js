@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { paths } = require('../paths');
 
@@ -84,6 +85,82 @@ class PiperTts {
     /** Queued requests, resolved in the order piper emits paths. */
     this.pending = [];
     this.outDir = path.join(paths.tmp, 'tts');
+
+    /**
+     * Rendered audio for the handful of phrases this app says over and over.
+     *
+     * The opening lines ("Checking your email.") and the small-talk replies are
+     * a closed set, and synthesizing one costs 400-800ms — which on a machine
+     * short of memory was the single largest part of the wait before the user
+     * heard anything. Rendering them once and reading the file back makes that
+     * cost vanish, and unlike keeping a model resident it costs no RAM.
+     *
+     * Deliberately bounded: only phrases registered through warmPhrases are
+     * ever stored, so a session of varied replies cannot grow it without limit.
+     */
+    this.cacheDir = path.join(paths.userData, 'tts-cache');
+    this.cache = new Map();
+  }
+
+  /** Identifies cached audio by what would change how it sounds. */
+  cacheKey(text) {
+    return crypto.createHash('sha1')
+      .update(`${this.voice}|${this.speed}|${String(text).trim()}`)
+      .digest('hex')
+      .slice(0, 16);
+  }
+
+  /** Loads whatever was rendered in an earlier run. */
+  loadCache() {
+    this.cache.clear();
+    let names;
+    try { names = fs.readdirSync(this.cacheDir); } catch { return 0; }
+    for (const name of names) {
+      if (!name.endsWith('.wav')) continue;
+      this.cache.set(name.replace(/\.wav$/, ''), path.join(this.cacheDir, name));
+    }
+    return this.cache.size;
+  }
+
+  /**
+   * Renders the fixed phrases that are not already cached.
+   *
+   * Called at launch, after everything the user can touch is ready. Rendering
+   * a couple of dozen short lines takes a few seconds once, and then they are
+   * instant for the life of the install.
+   */
+  async warmPhrases(lines = []) {
+    const wanted = [...new Set(lines.map((l) => String(l || '').trim()).filter(Boolean))];
+    if (!wanted.length) return { cached: 0, rendered: 0 };
+
+    fs.mkdirSync(this.cacheDir, { recursive: true });
+    this.loadCache();
+
+    let rendered = 0;
+    for (const line of wanted) {
+      const key = this.cacheKey(line);
+      if (this.cache.has(key) && fs.existsSync(this.cache.get(key))) continue;
+      try {
+        const result = await this.synthesize(line, { cache: false });
+        const dest = path.join(this.cacheDir, `${key}.wav`);
+        fs.copyFileSync(result.path, dest);
+        fs.rmSync(result.path, { force: true });
+        this.cache.set(key, dest);
+        rendered++;
+      } catch (err) {
+        // A phrase that will not render is synthesized on demand instead.
+        this.logger.debug?.(`[piper] could not cache "${line}": ${err.message}`);
+      }
+    }
+    return { cached: this.cache.size, rendered };
+  }
+
+  /** The cached file for a phrase, or null. */
+  cached(text) {
+    const file = this.cache.get(this.cacheKey(text));
+    if (!file) return null;
+    if (!fs.existsSync(file)) { this.cache.delete(this.cacheKey(text)); return null; }
+    return file;
   }
 
   get running() { return Boolean(this.proc); }
@@ -160,7 +237,12 @@ class PiperTts {
       });
 
       this.proc = proc;
-      this.logger.info?.(`[piper] resident on ${path.basename(voice.model)}`);
+      // Phrases rendered in an earlier run are reusable immediately.
+      const cached = this.loadCache();
+      this.logger.info?.(
+        `[piper] resident on ${path.basename(voice.model)}` +
+        (cached ? `, ${cached} phrase(s) cached` : '')
+      );
       return this;
     })();
 
@@ -206,9 +288,14 @@ class PiperTts {
    * Piper emits paths in the order it receives lines, so requests are matched
    * to outputs by queue position rather than by filename.
    */
-  async synthesize(text, { timeoutMs = 30000 } = {}) {
+  async synthesize(text, { timeoutMs = 30000, cache = true } = {}) {
     const clean = String(text || '').replace(/\s+/g, ' ').trim();
     if (!clean) throw new Error('Nothing to speak');
+
+    if (cache) {
+      const hit = this.cached(clean);
+      if (hit) return { path: hit, ms: 0, voice: this.voice, cached: true };
+    }
 
     if (!this.proc) await this.start();
 
@@ -238,7 +325,9 @@ class PiperTts {
     try {
       return { ...result, data: fs.readFileSync(result.path).toString('base64') };
     } finally {
-      fs.rmSync(result.path, { force: true });
+      // A cached phrase is kept: deleting it would mean rendering it again
+      // every single time, which is the opposite of the point.
+      if (!result.cached) fs.rmSync(result.path, { force: true });
     }
   }
 

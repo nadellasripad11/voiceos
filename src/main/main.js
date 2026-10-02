@@ -22,6 +22,7 @@ const { createProvider } = require('../core/llm/provider');
 const { TranscriptStore } = require('../core/memory/transcripts');
 const { DictationMode } = require('../core/modes/dictation');
 const { EditMode, classify } = require('../core/modes/edit');
+const { OPENINGS, SMALL_TALK } = require('../core/agent/tools');
 const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { SpeechStream } = require('../core/tts/stream');
@@ -215,17 +216,25 @@ async function initServices() {
   // Start the native bridge eagerly: its first call otherwise pays ~7s of
   // PowerShell and assembly loading, which would land on the user's first
   // dictation instead of on app launch.
-  services.bridge.start()
+  const bridgeReady = services.bridge.start()
     .then(() => measureBridgeScale())
     .then(() => logger.info('native bridge ready'))
     .catch((err) => logger.error(`native bridge failed to start: ${err.message}`));
 
-  // Warmed now so the first spoken reply does not pay the model load.
-  services.tts.prewarm().catch(() => {});
+  // Warmed now so the first spoken reply does not pay the model load, then the
+  // fixed phrases are rendered once so they never cost anything again.
+  const ttsReady = services.tts.prewarm()
+    .then(() => warmSpokenPhrases())
+    .catch(() => {});
 
-  // And the language model, which is the larger of the two: a cold model costs
-  // about twelve seconds on first use against under two when resident.
-  warmBrain();
+  // The language model last, and only once the other two are up.
+  //
+  // Evaluating the tool prompt saturates the CPU for the better part of a
+  // minute. Started alongside the others it starved both: Piper's warm-up went
+  // from 1.7s to 18.8s and the PowerShell bridge missed its 30s startup
+  // deadline outright, which would have left dictation unable to type
+  // anything. Everything the user can actually touch comes first.
+  Promise.all([bridgeReady, ttsReady]).then(() => warmBrain());
 
   services.transcripts.prune()
     .then((r) => r.removed && logger.info(`pruned ${r.removed} expired transcript file(s)`))
@@ -1390,6 +1399,29 @@ async function transcribeOnly(samples, sampleRate, signal) {
  * first question. Paying it at launch instead costs nothing the user notices.
  * Only Ollama can be warmed; hosted providers have nothing to load.
  */
+/**
+ * Renders the phrases the app says over and over.
+ *
+ * The opening lines and the small-talk replies are a closed set, and each one
+ * costs 400-800ms to synthesize — on a machine short of memory that was the
+ * largest single part of the wait before the user heard anything. Rendered once
+ * at launch and read back from disk thereafter, which unlike keeping a model
+ * resident costs no RAM at all.
+ */
+async function warmSpokenPhrases() {
+  const lines = [
+    ...Object.values(OPENINGS).filter(Boolean),
+    ...Object.values(SMALL_TALK).flat(),
+    'Let me think about that.'
+  ];
+  try {
+    const { cached, rendered } = await services.tts.warmPhrases(lines);
+    logger.info(`[tts] ${cached} fixed phrase(s) ready${rendered ? ` (${rendered} rendered now)` : ''}`);
+  } catch (err) {
+    logger.debug(`[tts] could not cache phrases: ${err.message}`);
+  }
+}
+
 let warmAbort = null;
 let warmTimer = null;
 let warmDone = false;

@@ -17,7 +17,7 @@
     "dist": "electron-builder",
     "restart": "node scripts/restart.js",
     "test": "node scripts/test-hotkeys.js && node scripts/test-speech-stream.js && node scripts/test-edit.js && node scripts/test-smalltalk.js",
-    "test:live": "node scripts/test-stream.js && node scripts/test-agent-stream.js && node scripts/test-bridge.js",
+    "test:live": "node scripts/test-tts-cache.js && node scripts/test-stream.js && node scripts/test-agent-stream.js && node scripts/test-bridge.js",
     "bench": "node scripts/bench-latency.js"
   },
   "dependencies": {},

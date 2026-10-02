@@ -12,6 +12,7 @@ const { ConnectionManager } = require('../src/core/connect/manager');
 const { getBridge } = require('../src/core/native/bridge');
 const { createProvider } = require('../src/core/llm/provider');
 const { PiperTts, speakableSummary } = require('../src/core/tts/piper');
+const { OPENINGS, SMALL_TALK } = require('../src/core/agent/tools');
 const { config } = require('../src/core/config');
 const { paths } = require('../src/core/paths');
 const fs = require('fs');
@@ -37,7 +38,14 @@ const QUESTIONS = [
   process.stdout.write('warming speech… ');
   const warm0 = Date.now();
   await tts.prewarm();
-  console.log(`${Date.now() - warm0}ms (once, at launch)\n`);
+  // The app renders its fixed phrases at launch, so the benchmark must too, or
+  // it measures a cost the user never actually pays.
+  const phrases = await tts.warmPhrases([
+    ...Object.values(OPENINGS).filter(Boolean),
+    ...Object.values(SMALL_TALK).flat(),
+    'Let me think about that.'
+  ]);
+  console.log(`${Date.now() - warm0}ms (once, at launch; ${phrases.cached} phrases cached)\n`);
 
   const connections = new ConnectionManager({ config, bridge, browser: null, logger: quiet, credentials: creds });
   const agent = new Agent({
