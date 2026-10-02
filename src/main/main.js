@@ -1357,6 +1357,9 @@ async function runAgent(question, { signal, source = 'voice' } = {}) {
     onPartial: (text, { done, retracted } = {}) => {
       if (retracted) {
         // The model asked for a tool after all; what it wrote was preamble.
+        // The stream has to forget it, or the real answer would be read from
+        // the wrong offset.
+        if (stream) stream.reset();
         broadcast('agent-partial', { turn, text: '', retracted: true });
         return;
       }

@@ -54,8 +54,24 @@ class SpeechStream {
     this.spokenChars = 0;
     this.seq = 0;
     this.cancelled = false;
+    /** Bumped by reset(), so clips queued under an abandoned text are dropped. */
+    this.generation = 0;
     /** Serializes synthesis so clips are emitted in order. */
     this.tail = Promise.resolve();
+  }
+
+  /**
+   * Forgets everything fed so far.
+   *
+   * The model sometimes writes a line of preamble and then decides to call a
+   * tool instead, which retracts what it wrote. Without this the character
+   * offset would still point into the abandoned text, so the real answer would
+   * be sliced from the wrong place and read out mangled.
+   */
+  reset() {
+    this.consumed = 0;
+    this.spokenChars = 0;
+    this.generation++;
   }
 
   /** Feed the running text; speaks whatever sentences are now complete. */
@@ -102,12 +118,13 @@ class SpeechStream {
     // sentences queued together would all pass the check.
     this.spokenChars += line.length;
     const seq = this.seq++;
+    const gen = this.generation;
 
     this.tail = this.tail.then(async () => {
-      if (this.cancelled) return;
+      if (this.cancelled || gen !== this.generation) return;
       try {
         const audio = await this.tts.synthesizeBase64(line, { speed: this.speed });
-        if (this.cancelled) return;
+        if (this.cancelled || gen !== this.generation) return;
         this.emit({ data: audio.data, voice: audio.voice, seq });
       } catch (err) {
         // Never fatal: the answer is already on screen.

@@ -125,6 +125,27 @@ async function typeIn(stream, text, step = 3) {
     check('and stops synthesis too', spoken.length === 0, JSON.stringify(spoken));
   }
 
+  console.log('\nRetracting preamble the model abandoned:');
+  {
+    // The model writes a line, decides to call a tool, and the real answer
+    // replaces what it wrote. The offsets must not carry over.
+    const { stream, spoken, clips } = makeStream();
+    stream.push('Let me check that for you. ');
+    await sleep(80);
+    stream.reset();
+    await typeIn(stream, 'You have three messages waiting. The first is from Priya.');
+
+    const all = spoken.join(' ');
+    check('the real answer is spoken whole',
+      all.includes('You have three messages waiting.') && all.includes('The first is from Priya.'),
+      JSON.stringify(spoken));
+    check('nothing is sliced from the abandoned text',
+      !spoken.some((s) => s.includes('check that for you') && s.includes('You have')),
+      JSON.stringify(spoken));
+    check('clips still arrive in order', clips.every((c, i) => i === 0 || c.seq > clips[i - 1].seq),
+      JSON.stringify(clips.map((c) => c.seq)));
+  }
+
   console.log('\nMarkdown is not read aloud:');
   {
     const { stream, spoken } = makeStream();
