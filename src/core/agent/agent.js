@@ -16,7 +16,7 @@
  * Nothing that sends, creates, changes or deletes runs without the user's
  * approval, unless the tool is marked autoConfirm and the user has allowed that.
  */
-const { buildTools, toolSchemas } = require('./tools');
+const { buildTools, toolSchemas, openingFor } = require('./tools');
 const { matchIntent, INTENTS } = require('./intents');
 
 const SYSTEM_PROMPT = `You are VoiceOS, a voice assistant running on the user's own computer.
@@ -60,7 +60,7 @@ class Agent {
    * Handles one spoken request.
    * @returns {Promise<{question, answer, found, ms, model, usedRouter}>}
    */
-  async run(question, { onStage = () => {}, signal } = {}) {
+  async run(question, { onStage = () => {}, onOpening = null, signal } = {}) {
     const started = Date.now();
     const tools = buildTools(this.ctx);
 
@@ -69,6 +69,13 @@ class Agent {
     if (routed) {
       onStage('thinking');
       this.logger.info?.(`[agent] routed "${question}" -> ${routed.tool.name}`);
+
+      // Say what is about to happen while it happens. Synthesis and the tool
+      // run concurrently, so the reply starts immediately rather than after
+      // the round trip.
+      const opening = openingFor(routed.tool.name);
+      if (opening && onOpening) onOpening(opening);
+
       const result = await this.execute(routed.tool, routed.args, { signal });
       return this.finish({ question, result, started, model: 'router', usedRouter: true });
     }
@@ -88,6 +95,8 @@ class Agent {
     }
 
     onStage('thinking');
+    // The model path is the slow one, so it benefits most from speaking first.
+    if (onOpening) onOpening('Let me think about that.');
     return this.runModelLoop(question, tools, { started, signal, onStage });
   }
 

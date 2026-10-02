@@ -301,6 +301,36 @@ function rms(arr) {
 
 // --- Capture -------------------------------------------------------------
 
+/**
+ * Holds an open microphone stream so recording starts instantly.
+ *
+ * getUserMedia costs a few hundred milliseconds, and paying it after the key
+ * is pressed means the first words of a sentence are lost. The stream is
+ * opened once and reused; it is released when the app sleeps so a stale device
+ * handle is not kept forever.
+ */
+let warmStream = null;
+
+async function prewarmMic() {
+  if (warmStream && warmStream.active) return warmStream;
+  try {
+    warmStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    return warmStream;
+  } catch {
+    // Permission not granted yet, or no device: fall back to asking on demand.
+    warmStream = null;
+    return null;
+  }
+}
+
+function releaseWarmMic() {
+  if (!warmStream) return;
+  for (const track of warmStream.getTracks()) track.stop();
+  warmStream = null;
+}
+
 async function startCapture(mode, config) {
   if (capture.stream) return;
   Object.assign(capture, {
@@ -315,9 +345,12 @@ async function startCapture(mode, config) {
   startTimer();
 
   try {
-    capture.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    });
+    // The pre-warmed stream if it is still live, otherwise open one now.
+    capture.stream = (warmStream && warmStream.active)
+      ? warmStream
+      : await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
   } catch (err) {
     fail('Microphone unavailable', describeMicError(err));
     return;
@@ -424,7 +457,13 @@ function teardownCapture() {
   if (capture.source) { try { capture.source.disconnect(); } catch {} capture.source = null; }
   capture.analyser = null;
   if (capture.context) { capture.context.close().catch(() => {}); capture.context = null; }
-  if (capture.stream) { for (const t of capture.stream.getTracks()) t.stop(); capture.stream = null; }
+  if (capture.stream) {
+    // Keep the pre-warmed stream alive; only stop one we opened ourselves.
+    if (capture.stream !== warmStream) {
+      for (const t of capture.stream.getTracks()) t.stop();
+    }
+    capture.stream = null;
+  }
   capture.chunks = [];
   levels.fill(0);
   drawWave();
@@ -805,6 +844,11 @@ bridge.onHover((over) => {
   if (el.stage.dataset.state === 'idle') restoreAnswer();
   else cancelCollapse();
 });
+
+// Opened ahead of time so holding the key starts capturing immediately.
+prewarmMic();
+// A stream held across sleep goes stale and yields silence, so it is renewed.
+window.addEventListener('focus', () => { if (!warmStream || !warmStream.active) prewarmMic(); });
 
 drawWave();
 setState('idle');

@@ -210,6 +210,9 @@ async function initServices() {
     .then(() => logger.info('native bridge ready'))
     .catch((err) => logger.error(`native bridge failed to start: ${err.message}`));
 
+  // Warmed now so the first spoken reply does not pay the model load.
+  services.tts.prewarm().catch(() => {});
+
   services.transcripts.prune()
     .then((r) => r.removed && logger.info(`pruned ${r.removed} expired transcript file(s)`))
     .catch(() => {});
@@ -930,7 +933,9 @@ function registerIpc() {
         broadcast('agent-result', { question: transcript, answer: '', found: [], pending: true });
         const result = await services.agent.run(transcript, {
           signal,
-          onStage: (stage, detail) => broadcast('session-stage', { stage, detail })
+          onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
+          // Spoken while the tool is still running, not after it.
+          onOpening: (line) => speak(line, { opening: true })
         });
 
         broadcast('agent-result', result);
@@ -1134,7 +1139,8 @@ function registerIpc() {
     try {
       const result = await services.agent.run(question, {
         signal: session.abort.signal,
-        onStage: (stage, detail) => broadcast('session-stage', { stage, detail })
+        onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
+        onOpening: (line) => speak(line, { opening: true })
       });
       broadcast('agent-result', result);
       speak(result.spoken || result.answer);
@@ -1302,12 +1308,14 @@ async function transcribeOnly(samples, sampleRate, signal) {
  * playback stays in the browser audio stack and needs no native dependency.
  * Failure is never fatal: the answer is already on screen.
  */
-async function speak(text, { force = false } = {}) {
+async function speak(text, { force = false, opening = false } = {}) {
   if (!force) {
     if (!config.get('tts.enabled', true)) return logger.debug('[tts] disabled');
     if (!config.get('tts.speakAgentReplies', true)) return logger.debug('[tts] agent replies muted');
   }
-  const line = speakableSummary(text);
+  // An opening line is already short and deliberate; summarising it would
+  // only risk mangling it.
+  const line = opening ? String(text).trim() : speakableSummary(text);
   if (!line) return logger.debug('[tts] nothing worth speaking');
 
   try {

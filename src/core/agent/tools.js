@@ -563,6 +563,44 @@ function parseWhen(when) {
   return null;
 }
 
+/**
+ * What to say while a tool runs.
+ *
+ * Spoken before the work starts, so the reply begins immediately instead of
+ * after the round trip. Deliberately vague about the outcome: it has not
+ * happened yet, and promising a result that might fail would be worse than
+ * silence.
+ */
+const OPENINGS = {
+  list_email: 'Checking your email.',
+  read_email: 'Finding that message.',
+  send_email: 'Drafting that.',
+  list_events: 'Looking at your calendar.',
+  create_event: 'Adding that.',
+  list_coursework: 'Checking what is due.',
+  search_drive: 'Searching your Drive.',
+  search_web: 'Searching the web.',
+  answer_from_web: 'Looking that up.',
+  fetch_page: 'Reading that page.',
+  search_files: 'Looking through your files.',
+  read_screen: 'Reading your screen.',
+  point_and_ask: 'Having a look.',
+  now_playing: null,          // instant; an opening line would arrive after it
+  control_playback: null,
+  set_volume: null,
+  list_reminders: null,
+  create_reminder: null,
+  take_note: null,
+  list_windows: null,
+  open_app: null,
+  open_url: null
+};
+
+/** The line to speak while a tool runs, or null when it is not worth one. */
+function openingFor(toolName) {
+  return OPENINGS[toolName] || null;
+}
+
 // --- Registry -------------------------------------------------------------
 
 /**
@@ -603,6 +641,8 @@ function toolSchemas(tools) {
 
 module.exports = {
   readCursorContext,
+  openingFor,
+  OPENINGS,
   buildTools,
   toolSchemas,
   duckDuckGo,
