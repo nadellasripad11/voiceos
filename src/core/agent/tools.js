@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { paths } = require('../paths');
+const { googleTools } = require('./tools-google');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -573,6 +574,8 @@ function parseWhen(when) {
 function buildTools(ctx) {
   const all = [
     ...systemTools(ctx),
+    // Only offered when a connection manager is present to resolve tokens.
+    ...(ctx.connections ? googleTools(ctx) : []),
     ...mediaTools(ctx),
     ...webTools(ctx),
     ...fileTools(ctx),

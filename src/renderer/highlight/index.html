@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self';" />
+  <title>VoiceOS target</title>
+  <link rel="stylesheet" href="highlight.css" />
+</head>
+<body>
+  <!--
+    The targeting overlay. Covers the whole screen, click-through, and draws an
+    outline around whatever is under the cursor while Agent Mode is listening,
+    so the user can see what VoiceOS will read before they finish asking.
+  -->
+  <div class="frame" id="frame" hidden>
+    <div class="edge"></div>
+    <span class="tag" id="tag">Point to show VoiceOS</span>
+  </div>
+  <script src="highlight.js"></script>
+</body>
+</html>

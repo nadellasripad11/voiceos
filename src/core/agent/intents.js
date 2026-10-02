@@ -39,6 +39,39 @@ const INTENTS = [
       !/\b(playing|song|track|music|open|reminder|file|time|weather|due|volume|windows?)\b/i.test(text)
   },
 
+  // --- Mail, calendar and school -------------------------------------------
+  {
+    re: /\b(?:check|read|any|new|got|show|what'?s? in)\b.*\b(?:e?mails?|inbox)\b/i,
+    tool: 'list_email',
+    args: (_m, text) => ({ query: /unread|new/i.test(text) ? 'is:unread' : 'in:inbox' })
+  },
+  {
+    re: /\bread\b.*\be?mail\b.*\bfrom\b\s+(.+)/i,
+    tool: 'read_email',
+    args: (m) => ({ query: `from:${m[1].trim()}` })
+  },
+  {
+    re: /\b(?:on (?:my |the )?calendar|scheduled|my meetings?|my agenda)\b/i,
+    tool: 'list_events',
+    args: (_m, text) => ({ days: /week/i.test(text) ? 7 : /tomorrow/i.test(text) ? 2 : 1 })
+  },
+  {
+    re: /\b(?:am i free|do i have anything|what'?s? (?:on )?today)\b/i,
+    tool: 'list_events',
+    args: (_m, text) => ({ days: /tomorrow/i.test(text) ? 2 : 1 })
+  },
+  {
+    re: /\b(?:due|homework|assignments?|coursework)\b/i,
+    tool: 'list_coursework'
+  },
+  {
+    re: /\b(?:find|search)\b.*\b(?:drive|google drive)\b|\bin my drive\b/i,
+    tool: 'search_drive',
+    args: (_m, text) => ({
+      query: text.replace(/.*\b(?:find|search)\b\s*(?:for\s*)?/i, '')
+        .replace(/\b(?:in )?(?:my )?(?:google )?drive\b/i, '').trim()
+    })
+  },
   // --- Media --------------------------------------------------------------
   {
     re: /^(?:what(?:'s| is)?\s+(?:this\s+)?(?:song|track|playing|music)|who sings this|what am i listening to)/i,

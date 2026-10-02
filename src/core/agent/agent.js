@@ -31,11 +31,12 @@ Rules:
 - Do not describe the tools or your reasoning. Just answer.`;
 
 class Agent {
-  constructor({ provider, config, bridge, browser, tts, logger = console, requestConfirmation }) {
+  constructor({ provider, config, bridge, browser, tts, connections, logger = console, requestConfirmation }) {
     this.provider = provider;
     this.config = config;
     this.bridge = bridge;
     this.browser = browser;
+    this.connections = connections;
     this.tts = tts;
     this.logger = logger;
     this.requestConfirmation = requestConfirmation;
@@ -43,7 +44,16 @@ class Agent {
   }
 
   get ctx() {
-    return { bridge: this.bridge, browser: this.browser, config: this.config, logger: this.logger };
+    // connections must be here: buildTools skips every provider-backed tool
+    // when it is missing, which silently drops Gmail, Calendar, Drive and
+    // Classroom and sends those questions to web search instead.
+    return {
+      bridge: this.bridge,
+      browser: this.browser,
+      config: this.config,
+      connections: this.connections,
+      logger: this.logger
+    };
   }
 
   /**

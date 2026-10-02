@@ -1,0 +1,76 @@
+/**
+ * The targeting overlay.
+ *
+ * Nothing here may ever be opaque or interactive: the window covers the whole
+ * screen, so a solid background or a pointer target would make the desktop
+ * unusable. Only the outline and its label are drawn.
+ */
+@import url("../shared/tokens.css");
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--font);
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.frame {
+  position: absolute;
+  /* Positioned from the main process in screen coordinates. */
+  border-radius: 8px;
+  /* Moving between targets should read as the same outline travelling, not as
+     one vanishing and another appearing. */
+  transition: left 110ms ease-out, top 110ms ease-out,
+              width 110ms ease-out, height 110ms ease-out;
+}
+.frame[hidden] { display: none; }
+
+.edge {
+  position: absolute;
+  inset: 0;
+  border: 2px solid #0a84ff;
+  border-radius: 8px;
+  background: rgba(10, 132, 255, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.5) inset,
+    0 0 16px rgba(10, 132, 255, 0.5);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(255,255,255,.5) inset, 0 0 14px rgba(10,132,255,.45); }
+  50%      { box-shadow: 0 0 0 1px rgba(255,255,255,.5) inset, 0 0 24px rgba(10,132,255,.75); }
+}
+
+.tag {
+  position: absolute;
+  left: 0;
+  /* Sits above the outline, and flips below it when there is no room. */
+  bottom: calc(100% + 7px);
+  display: inline-block;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  font-size: 12px;
+  font-weight: 560;
+  color: #fff;
+  background: rgba(10, 132, 255, 0.95);
+  border-radius: 7px;
+  padding: 4px 10px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+}
+.frame[data-flip="true"] .tag { bottom: auto; top: calc(100% + 7px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .frame { transition: none; }
+  .edge { animation: none; }
+}

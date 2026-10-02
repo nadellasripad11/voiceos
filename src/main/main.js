@@ -49,7 +49,8 @@ const windows = {
   notch: null,
   settings: null,
   rail: null,
-  onboarding: null
+  onboarding: null,
+  highlight: null
 };
 
 let tray = null;
@@ -342,6 +343,107 @@ function idleNotch() {
 
 function hideNotch() { idleNotch(); }
 
+/**
+ * The targeting overlay.
+ *
+ * Covers a whole display and is click-through, so it can outline whatever is
+ * under the cursor without ever intercepting a click. Shown only while Agent
+ * Mode is listening: a permanent highlight would be noise, and the UIA lookup
+ * behind it is not free.
+ */
+function createHighlight() {
+  if (windows.highlight && !windows.highlight.isDestroyed()) return windows.highlight;
+
+  const display = screen.getPrimaryDisplay();
+  const { x, y, width, height } = display.bounds;
+
+  const win = new BrowserWindow({
+    x, y, width, height,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    focusable: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'highlight.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // forward: false — this overlay must never take a click, not even to itself.
+  win.setIgnoreMouseEvents(true, { forward: false });
+  pipeConsole(win, 'highlight');
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'highlight', 'index.html'));
+
+  win.on('closed', () => { windows.highlight = null; });
+  windows.highlight = win;
+  return win;
+}
+
+/** Polls what is under the cursor and feeds the overlay. */
+let targetTimer = null;
+let targetInFlight = false;
+let lastTargetKey = '';
+
+function startTargeting() {
+  if (!config.get('agent.cursorContext', true)) return;
+  if (config.get('privacy.privateMode')) return;
+
+  const win = createHighlight();
+  const display = screen.getPrimaryDisplay();
+  win.setBounds(display.bounds);
+  win.showInactive();
+
+  stopTargeting({ keepWindow: true });
+  targetTimer = setInterval(async () => {
+    // A UIA lookup takes a few hundred milliseconds, so never stack them.
+    if (targetInFlight) return;
+    targetInFlight = true;
+    try {
+      const { x, y } = await services.bridge.cursorPos();
+      const element = await services.bridge.elementAt(x, y);
+      if (!element || !element.bounds) return;
+
+      // Only repaint when the target actually changed, so the outline does not
+      // jitter while the pointer sits still.
+      const key = `${element.bounds.x},${element.bounds.y},${element.bounds.width},${element.bounds.height}`;
+      if (key === lastTargetKey) return;
+      lastTargetKey = key;
+
+      const label = (element.name || '').trim().slice(0, 70) ||
+        (element.controlType ? `This ${String(element.controlType).toLowerCase()}` : 'Ask about this');
+
+      if (windows.highlight && !windows.highlight.isDestroyed()) {
+        windows.highlight.webContents.send('highlight-target', {
+          bounds: element.bounds,
+          label,
+          screen: { x: display.bounds.x, y: display.bounds.y }
+        });
+      }
+    } catch {
+      // Some surfaces expose nothing; that is normal, not an error.
+    } finally {
+      targetInFlight = false;
+    }
+  }, 220);
+}
+
+function stopTargeting({ keepWindow = false } = {}) {
+  if (targetTimer) { clearInterval(targetTimer); targetTimer = null; }
+  lastTargetKey = '';
+  if (!keepWindow && windows.highlight && !windows.highlight.isDestroyed()) {
+    windows.highlight.webContents.send('highlight-target', null);
+    windows.highlight.hide();
+  }
+}
+
 const RAIL_WIDTH = 340;
 
 /**
@@ -584,11 +686,14 @@ function startSession(mode) {
   // Resolved after the session starts so reading the window never delays
   // the moment recording begins.
   activeAppBadge().then((app) => app && broadcast('session-app', app)).catch(() => {});
+  // Only Agent Mode uses the cursor as context, so only it needs the overlay.
+  if (mode === 'agent') startTargeting();
   logger.info(`session start: ${mode}`);
 }
 
 function stopSession() {
   if (session.phase !== PHASE.LISTENING) return;
+  stopTargeting();
   session.phase = PHASE.PROCESSING;
   armWatchdog();
   logger.info(`session stop after ${Date.now() - session.startedAt}ms listening`);
@@ -598,6 +703,7 @@ function stopSession() {
 function cancelSession() {
   if (session.phase === PHASE.IDLE) return;
   if (session.abort) session.abort.abort();
+  stopTargeting();
   resetSession('cancelled');
   broadcast('session-cancel', {});
   idleNotch();
@@ -690,6 +796,7 @@ function registerIpc() {
       broadcast('session-error', { message: 'Something went wrong', detail: err.message });
       return { ok: false, reason: err.message };
     } finally {
+      stopTargeting();
       resetSession('finished');
       setTimeout(idleNotch, 2200);
     }
