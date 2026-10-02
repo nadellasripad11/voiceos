@@ -27,10 +27,11 @@ class HoldToTalk {
    *   this counts as a hold rather than the start of an ordinary shortcut
    */
   constructor({ onStart, onStop, logger = console, armMs = 220, bindings } = {}) {
-    // Which chord drives which mode, so the setting is real rather than
-    // decorative. Ctrl+Shift is the chord people reach for first, so by
-    // default it drives the agent.
-    this.bindings = bindings || { agent: 'shift', dictation: 'alt' };
+    // Keyed by modifier, not by mode: modeForHeld looks up which mode a held
+    // modifier means. Keying it the other way round silently returned
+    // undefined for every chord, so nothing ever started.
+    // Ctrl+Shift is the chord people reach for first, so it drives the agent.
+    this.bindings = bindings || { shift: 'agent', alt: 'dictation' };
     this.onStart = onStart;
     this.onStop = onStop;
     this.logger = logger;
@@ -45,6 +46,20 @@ class HoldToTalk {
     this.pressedAt = new Map();
     this.activeMode = null;
     this.armTimer = null;
+
+    // Hands-free: a quick double-tap latches recording on until the next tap,
+    // so a long dictation does not mean holding a chord for a minute.
+    this.lastTapAt = 0;
+    this.lastTapMode = null;
+    this.handsFree = null;
+    this.doubleTapMs = 420;
+    this.latchedAt = 0;
+    // A release later than this is a hold being let go, not a tap. Generous,
+    // because the only thing it gates is a deliberate chord.
+    this.tapMaxMs = Math.max(400, armMs + 200);
+    // Stops the second half of the latching double-tap from immediately
+    // ending what it just started.
+    this.latchGuardMs = 250;
     // Set when a real key lands during a hold, so the combination is treated as
     // an ordinary shortcut rather than a request to talk.
     this.poisoned = false;
@@ -141,7 +156,9 @@ class HoldToTalk {
   onOtherKey() {
     if (this.held.size) this.poisoned = true;
     this.cancelArm();
-    if (this.activeMode) this.stop('another key was pressed');
+    // A latched session is deliberate, so ordinary typing must not end it;
+    // only a chord held at the same time does.
+    if (this.activeMode && !this.handsFree) this.stop('another key was pressed');
   }
 
   onModDown(mod) {
@@ -174,12 +191,65 @@ class HoldToTalk {
   }
 
   onModUp(mod) {
+    // Read the chord before forgetting this key, so a release knows what was
+    // being held a moment ago.
+    const modeBefore = this.modeForHeld();
+    const downAt = this.pressedAt.get(mod);
+    const heldMs = downAt ? Date.now() - downAt : Infinity;
+
     this.held.delete(mod);
     this.pressedAt.delete(mod);
-    // Released before arming elapsed: a tap, not a hold.
     if (this.armTimer && this.modeForHeld() === null) this.cancelArm();
-    if (this.activeMode) this.stop('released');
+
+    if (this.handsFree) {
+      // Latched on. One quick tap of the same chord finishes it; releasing the
+      // keys does not, which is the whole point of latching.
+      const ending = modeBefore === this.handsFree &&
+        !this.poisoned &&
+        heldMs < this.tapMaxMs &&
+        Date.now() - this.latchedAt > this.latchGuardMs;
+      if (ending) this.endHandsFree();
+    } else if (this.activeMode) {
+      // A hold ends when the chord is released.
+      this.stop('released');
+    } else if (modeBefore && !this.poisoned && heldMs < this.tapMaxMs) {
+      // Released before arming elapsed: a tap, which may be half a double-tap.
+      this.handleTap(modeBefore);
+    }
+
     if (!this.held.size) this.poisoned = false;
+  }
+
+  /**
+   * A tap on its own does nothing; two in quick succession latch hands-free on.
+   *
+   * A lone tap must stay inert, or brushing the modifiers would start recording
+   * at random. Ending a latched session is handled on release, not here, since
+   * by then nothing is arming.
+   */
+  handleTap(mode) {
+    const now = Date.now();
+    const isDouble = mode === this.lastTapMode && (now - this.lastTapAt) < this.doubleTapMs;
+    this.lastTapAt = now;
+    this.lastTapMode = mode;
+    if (!isDouble) return;
+
+    this.lastTapAt = 0;
+    this.lastTapMode = null;
+    this.handsFree = mode;
+    this.activeMode = mode;
+    this.latchedAt = now;
+    this.logger.info?.(`[hotkeys] hands-free started: ${mode}`);
+    try { this.onStart?.(mode, { handsFree: true }); } catch (err) { this.logger.error?.(err.message); }
+  }
+
+  endHandsFree() {
+    const ending = this.handsFree;
+    this.handsFree = null;
+    this.lastTapAt = 0;
+    this.lastTapMode = null;
+    this.activeMode = ending;
+    this.stop('tapped to finish');
   }
 
   cancelArm() {
@@ -196,6 +266,10 @@ class HoldToTalk {
 
   reset() {
     this.cancelArm();
+    this.handsFree = null;
+    this.lastTapAt = 0;
+    this.lastTapMode = null;
+    this.latchedAt = 0;
     this.held.clear();
     this.pressedAt.clear();
     this.activeMode = null;
@@ -222,7 +296,8 @@ class HoldToTalk {
         dictation: `Ctrl + ${this.bindings.shift === 'dictation' ? 'Shift' : 'Alt'}`,
         agent: `Ctrl + ${this.bindings.shift === 'agent' ? 'Shift' : 'Alt'}`
       },
-      mode: 'hold'
+      mode: 'hold',
+      handsFree: Boolean(this.handsFree)
     };
   }
 }

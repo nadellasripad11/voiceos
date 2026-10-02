@@ -756,7 +756,7 @@ function registerHotkeys() {
     holdToTalk = new HoldToTalk({
       logger,
       bindings,
-      onStart: (mode) => startSession(mode),
+      onStart: (mode, opts) => startSession(mode, opts),
       onStop: () => stopSession()
     });
   }
@@ -822,7 +822,7 @@ async function activeAppBadge() {
   }
 }
 
-function startSession(mode) {
+function startSession(mode, { handsFree = false } = {}) {
   if (session.phase !== PHASE.IDLE) return;
   const status = services.stt.status();
   if (!status.ready) {
@@ -843,7 +843,7 @@ function startSession(mode) {
   };
   armWatchdog();
   showNotch();
-  broadcast('session-start', { mode, config: config.all(), position: config.get('ui.notchPosition', 'top') });
+  broadcast('session-start', { mode, handsFree, config: config.all(), position: config.get('ui.notchPosition', 'top') });
   // Resolved after the session starts so reading the window never delays
   // the moment recording begins.
   activeAppBadge().then((app) => app && broadcast('session-app', app)).catch(() => {});

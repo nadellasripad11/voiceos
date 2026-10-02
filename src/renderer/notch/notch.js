@@ -331,17 +331,17 @@ function releaseWarmMic() {
   warmStream = null;
 }
 
-async function startCapture(mode, config) {
+async function startCapture(mode, config, { handsFree = false } = {}) {
   if (capture.stream) return;
   Object.assign(capture, {
-    mode, config, chunks: [], stopping: false, silenceSince: 0, hasSpoken: false, warned: false
+    mode, config, handsFree, chunks: [], stopping: false, silenceSince: 0, hasSpoken: false, warned: false
   });
 
   clearBody();
   currentResult = null;
   lastAnswer = null;
   cancelCollapse();
-  setState('listening', { hint: 'Listening…' });
+  setState('listening', { hint: handsFree ? 'Hands-free — tap to finish' : 'Listening…' });
   startTimer();
 
   try {
@@ -419,6 +419,9 @@ function maybeAutoStop(level) {
   }
   if (!capture.hasSpoken) return;
   if (elapsed < (vad.minRecordMs || 1200)) return;
+  // Hands-free means the user is in charge of when it ends, so a pause to
+  // think must not cut them off.
+  if (capture.handsFree) return;
 
   if (!capture.silenceSince) capture.silenceSince = Date.now();
   else if (Date.now() - capture.silenceSince > vad.silenceMs) finishCapture();
@@ -587,9 +590,9 @@ bridge.onSessionIdle(({ hotkeys, position } = {}) => {
   }
 });
 
-bridge.onSessionStart(({ mode, config, position }) => {
+bridge.onSessionStart(({ mode, config, position, handsFree }) => {
   applyPosition(position);
-  startCapture(mode, config);
+  startCapture(mode, config, { handsFree });
 });
 bridge.onSessionStop(() => finishCapture());
 
