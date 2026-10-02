@@ -21,6 +21,7 @@ const { WhisperEngine } = require('../core/stt/whisper');
 const { createProvider } = require('../core/llm/provider');
 const { TranscriptStore } = require('../core/memory/transcripts');
 const { DictationMode } = require('../core/modes/dictation');
+const { EditMode, classify } = require('../core/modes/edit');
 const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { SpeechStream } = require('../core/tts/stream');
@@ -100,7 +101,9 @@ function resetSession(reason) {
   if (reason && session.phase !== PHASE.IDLE) {
     logger.debug(`session reset (${reason}) from phase ${session.phase}`);
   }
-  session = { phase: PHASE.IDLE, mode: null, startedAt: 0, abort: null, watchdog: null };
+  session = { phase: PHASE.IDLE, mode: null, startedAt: 0, abort: null, watchdog: null, selection: null };
+  // Nothing in flight, so the warm-up may resume if it was stood down.
+  resumeWarm();
 }
 
 function armWatchdog() {
@@ -194,6 +197,12 @@ async function initServices() {
     requestConfirmation
   });
 
+  services.edit = new EditMode({
+    provider: services.provider,
+    config,
+    bridge: services.bridge,
+    logger
+  });
   services.dictation = new DictationMode({
     stt: services.stt,
     provider: services.provider,
@@ -247,6 +256,12 @@ function reloadServices() {
     connections: services.connections,
     logger,
     requestConfirmation
+  });
+  services.edit = new EditMode({
+    provider: services.provider,
+    config,
+    bridge: services.bridge,
+    logger
   });
   services.dictation = new DictationMode({
     stt: services.stt,
@@ -853,17 +868,46 @@ function startSession(mode, { handsFree = false } = {}) {
     mode,
     startedAt: Date.now(),
     abort: new AbortController(),
-    watchdog: null
+    watchdog: null,
+    selection: null
   };
+  // Transcription needs the CPU the warm-up is using.
+  pauseWarm();
   armWatchdog();
   showNotch();
   broadcast('session-start', { mode, handsFree, config: config.all(), position: config.get('ui.notchPosition', 'top') });
+  // Read the selection now, while it is still the user's: showing the overlay
+  // or anything they do next can clear it. Edit Mode needs it, and it is only
+  // read for the chord Edit shares, not for Agent Mode.
+  if (mode === 'dictation' && config.get('edit.enabled', true)) captureSelection();
   // Resolved after the session starts so reading the window never delays
   // the moment recording begins.
   activeAppBadge().then((app) => app && broadcast('session-app', app)).catch(() => {});
   // Only Agent Mode uses the cursor as context, so only it needs the overlay.
   if (mode === 'agent') startTargeting().catch((err) => logger.warn(`[trail] ${err.message}`));
   logger.info(`session start: ${mode}`);
+}
+
+/**
+ * Reads the selected text in the background, for Edit Mode.
+ *
+ * Deliberately not awaited: reading a selection goes through UI Automation and
+ * can take a moment, and recording must start the instant the key goes down.
+ * The result lands on the session well before the user stops speaking.
+ */
+function captureSelection() {
+  const forSession = session;
+  services.bridge.selection()
+    .then((sel) => {
+      const text = sel && sel.text;
+      if (!text || !text.trim()) return;
+      // Discard it if the session already ended, so a stale selection cannot
+      // be applied to a later one.
+      if (session !== forSession) return;
+      session.selection = text;
+      logger.info(`[edit] ${text.length} characters selected in ${(sel.source || 'the focused app')}`);
+    })
+    .catch((err) => logger.debug(`[edit] no selection: ${err.message}`));
 }
 
 function stopSession() {
@@ -927,11 +971,52 @@ function registerIpc() {
 
     try {
       if (activeMode === 'dictation') {
+        // Edit Mode shares this chord: with text selected and an instruction
+        // spoken, the selection is rewritten rather than typed over. Which one
+        // the user meant is only knowable once the words exist, so dictation
+        // hands off mid-flight instead of transcribing twice.
+        const selection = session.selection;
+        let handoff = null;
+
         const result = await services.dictation.run(samples, {
           sampleRate,
           signal,
-          onStage: (stage, detail) => broadcast('session-stage', { stage, detail })
+          onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
+          onTranscript: (text, { target }) => {
+            if (!selection || !config.get('edit.enabled', true)) return { handoff: false };
+            const verdict = classify(text, selection);
+            if (!verdict.instruction) return { handoff: false };
+            logger.info(`[edit] "${text}" — ${verdict.why}`);
+            handoff = { instruction: text, target };
+            return { handoff: true, to: 'edit' };
+          }
         });
+
+        if (handoff) {
+          const edited = await services.edit.run({
+            ...handoff,
+            selection,
+            signal,
+            onStage: (stage, detail) => broadcast('session-stage', { stage, detail })
+          });
+          broadcast('session-result', { ...edited, mode: 'edit' });
+          if (!edited.ok) {
+            broadcast('session-error', {
+              message: edited.onClipboard ? 'Left on the clipboard' : 'Could not make that edit',
+              detail: edited.reason
+            });
+          }
+          return edited;
+        }
+
+        // Logged either way: a session that ends with nothing inserted and no
+        // trace in the log is indistinguishable from one that silently broke.
+        if (result.ok) {
+          logger.info(`[dictation] ${result.text.length} chars in ${result.ms}ms` +
+            `${result.inserted ? '' : ' (not inserted)'}`);
+        } else {
+          logger.info(`[dictation] nothing to insert: ${result.reason}`);
+        }
         broadcast('session-result', result);
         return result;
       }
@@ -940,9 +1025,11 @@ function registerIpc() {
         // without the dictation formatting pass.
         const transcript = await transcribeOnly(samples, sampleRate, signal);
         if (!transcript) {
+          logger.info('[agent] no speech heard');
           broadcast('session-error', { message: 'No speech heard', detail: 'Try again a little closer to the microphone.' });
           return { ok: false, reason: 'silence' };
         }
+        logger.info(`[agent] heard "${transcript}"`);
 
         return runAgent(transcript, { signal, source: 'voice' });
       }
@@ -1303,18 +1390,58 @@ async function transcribeOnly(samples, sampleRate, signal) {
  * first question. Paying it at launch instead costs nothing the user notices.
  * Only Ollama can be warmed; hosted providers have nothing to load.
  */
+let warmAbort = null;
+let warmTimer = null;
+let warmDone = false;
+
 function warmBrain({ delayMs = 2500 } = {}) {
-  if (!services.agent) return;
-  const started = Date.now();
-  // Evaluating the tool prompt is tens of seconds of CPU in the Ollama process.
-  // Worth paying, but not while the overlay and tray are still appearing.
-  new Promise((r) => setTimeout(r, delayMs))
-    .then(() => services.agent.prewarm())
-    .then((warmed) => {
-      if (warmed) logger.info(`[llm] model and tool prompt cached in ${Date.now() - started}ms`);
-      else logger.debug('[llm] nothing to warm');
-    })
-    .catch((err) => logger.debug(`[llm] could not warm up: ${err.message}`));
+  if (!services.agent || warmDone || warmAbort) return;
+
+  // Evaluating the tool prompt is tens of seconds of CPU in the Ollama
+  // process. Worth paying, but not while the overlay and tray are still
+  // appearing.
+  clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    const started = Date.now();
+    warmAbort = new AbortController();
+    const mine = warmAbort;
+
+    services.agent.prewarm({ signal: mine.signal })
+      .then((warmed) => {
+        warmDone = Boolean(warmed);
+        if (warmed) logger.info(`[llm] model and tool prompt cached in ${Date.now() - started}ms`);
+        else logger.debug('[llm] nothing to warm');
+      })
+      .catch((err) => {
+        if (mine.signal.aborted) logger.debug('[llm] warm-up yielded to a request');
+        else logger.debug(`[llm] could not warm up: ${err.message}`);
+      })
+      .finally(() => { if (warmAbort === mine) warmAbort = null; });
+  }, delayMs);
+}
+
+/**
+ * Stands the warm-up down while the user is actually talking.
+ *
+ * Prompt evaluation saturates the CPU, and Whisper needs that CPU to transcribe
+ * what was just said. Warming is an optimisation; being starved mid-sentence is
+ * a failure, so the real request always wins and the warm-up is retried after.
+ */
+function pauseWarm() {
+  clearTimeout(warmTimer);
+  warmTimer = null;
+  if (warmAbort) {
+    warmAbort.abort();
+    warmAbort = null;
+    logger.debug('[llm] warm-up paused for a session');
+  }
+}
+
+/** Picks the warm-up back up once nothing is in flight. */
+function resumeWarm() {
+  if (warmDone) return;
+  warmBrain({ delayMs: 4000 });
 }
 
 /** Monotonic id for one question-and-answer, so late audio can be discarded. */

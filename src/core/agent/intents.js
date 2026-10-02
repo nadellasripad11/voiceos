@@ -74,7 +74,10 @@ const INTENTS = [
   },
   // --- Media --------------------------------------------------------------
   {
-    re: /^(?:what(?:'s| is)?\s+(?:this\s+)?(?:song|track|playing|music)|who sings this|what am i listening to)/i,
+    // The apostrophe is optional throughout: transcription returns "whats
+    // playing" as often as "what's playing", and requiring one meant the
+    // command simply did nothing.
+    re: /^(?:what(?:'?s| is)?\s+(?:this\s+)?(?:song|track|playing|music)|who sings this|what am i listening to)/i,
     tool: 'now_playing'
   },
   {
@@ -129,15 +132,15 @@ const INTENTS = [
 
   // --- Screen and selection ----------------------------------------------
   {
-    re: /\b(?:read (?:the|my) screen|what(?:'s| is) on (?:my |the )?screen)\b/i,
+    re: /\b(?:read (?:the|my) screen|what(?:'?s| is) on (?:my |the )?screen)\b/i,
     tool: 'read_screen'
   },
   {
-    re: /\b(?:read (?:the|my) selection|what did i select|what(?:'s| is) selected)\b/i,
+    re: /\b(?:read (?:the|my) selection|what did i select|what(?:'?s| is) selected)\b/i,
     tool: 'read_selection'
   },
   {
-    re: /\b(?:what(?:'s| is)? open|list (?:my )?windows|what apps are open)\b/i,
+    re: /\b(?:what(?:'?s| is)? open|list (?:my )?windows|what apps are open)\b/i,
     tool: 'list_windows'
   },
 
@@ -173,8 +176,68 @@ const INTENTS = [
     tool: 'search_web',
     args: (m) => ({ query: m[1].trim() })
   },
+  // --- Small talk ----------------------------------------------------------
+  // Must precede the open-ended web lookup below: "what's up?" starts with
+  // "what", so without these it was being answered with a web search.
+  // Deliberately tight — anchored, short, and nothing that could be a real
+  // question — because swallowing a genuine request is far worse than
+  // searching the web for a greeting.
   {
-    re: /^(?:what|who|when|where|why|how)\b.+$/i,
+    re: /^(?:hi|hey|hello|yo|hiya|howdy)\b[\s!.,]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'greeting' })
+  },
+  {
+    re: /^good\s+morning\b[\s!.,]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'morning' })
+  },
+  {
+    re: /^good\s+afternoon\b[\s!.,]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'afternoon' })
+  },
+  {
+    re: /^good\s+(?:evening|night)\b[\s!.,]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'evening' })
+  },
+  {
+    re: /^(?:what(?:'s|s)? up|sup|how(?:'s|s| is) it going|how are (?:you|things)|how(?:'re|re) you(?: doing)?|you (?:there|awake|up))\b[\s!.,?]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'howAreYou' })
+  },
+  {
+    re: /^(?:thanks|thank you|thanks a lot|cheers|ta|nice one|appreciate it)\b[\s!.,]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'thanks' })
+  },
+  {
+    re: /^(?:who are you|what are you|what(?:'s|s| is) your name|introduce yourself)\b[\s!.,?]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'identity' })
+  },
+  {
+    re: /^(?:what can you do|what do you do|what are you able to do|help me|help|how do (?:i|you) (?:use|work) (?:this|you))\b[\s!.,?]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'capability' })
+  },
+  {
+    re: /^(?:bye|goodbye|good bye|see you|see ya|that(?:'s|s)? all|nothing|never mind|nevermind)\b[\s!.,]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'goodbye' })
+  },
+  {
+    re: /^(?:sorry|my bad|oops|whoops|ignore that)\b[\s!.,]*$/i,
+    tool: 'small_talk',
+    args: () => ({ kind: 'sorry' })
+  },
+
+  {
+    // The optional "s" matters: \b after "what" does not match "whats", so
+    // every question with the apostrophe dropped — which is most of them, as
+    // transcribed — missed this pattern and fell through to the model.
+    re: /^(?:what|who|when|where|why|how)(?:'?s)?\b.+$/i,
     tool: 'answer_from_web',
     args: (_m, text) => ({ query: text.replace(/[?]+$/, '').trim() })
   }
@@ -186,7 +249,14 @@ const INTENTS = [
  * @param {Array<{name:string}>} tools the tools currently available
  */
 function matchIntent(text, tools) {
-  const clean = String(text || '').trim();
+  // Curly quotes and dashes are normalised first. Whisper emits both forms
+  // depending on the sentence, and a pattern written with a straight
+  // apostrophe would match one and silently miss the other.
+  const clean = String(text || '')
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, '-')
+    .trim();
   if (!clean) return null;
   const byName = new Map(tools.map((t) => [t.name, t]));
 

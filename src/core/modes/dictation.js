@@ -33,7 +33,16 @@ class DictationMode {
    * @param {(stage: string, detail?: object) => void} opts.onStage progress for the notch UI
    * @returns {Promise<object>} timings and the text that was inserted
    */
-  async run(samples, { onStage = () => {}, sampleRate = TARGET_SAMPLE_RATE, insert = true, signal } = {}) {
+  /**
+   * @param {object} opts
+   * @param {(text: string, ctx: object) => Promise<{handoff: boolean}>} [opts.onTranscript]
+   *   Called with the raw transcript before any formatting. Edit Mode shares
+   *   this chord, and which one the user meant depends on what they said — so
+   *   the decision can only be made here, after transcription. Returning
+   *   `{handoff: true}` stops this dictation without inserting anything, which
+   *   keeps the whole gesture to a single transcription pass.
+   */
+  async run(samples, { onStage = () => {}, sampleRate = TARGET_SAMPLE_RATE, insert = true, signal, onTranscript = null } = {}) {
     const cfg = this.config.all();
     const t0 = Date.now();
     const timings = {};
@@ -84,6 +93,19 @@ class DictationMode {
 
     if (!stt.text) {
       return { ok: false, reason: 'no speech detected', text: '', timings, ms: Date.now() - t0, stt };
+    }
+
+    if (onTranscript) {
+      const verdict = await onTranscript(stt.text, { target });
+      if (verdict && verdict.handoff) {
+        this.logger.info?.(`[dictation] handed off to ${verdict.to || 'another mode'}`);
+        return {
+          ok: true, handoff: true, to: verdict.to || null,
+          raw: stt.text, text: '', inserted: false,
+          target: target && { process: target.process, title: target.title },
+          timings, ms: Date.now() - t0, stt
+        };
+      }
     }
 
     // Deterministic cleanup always runs; it is instant and model-independent.

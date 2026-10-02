@@ -618,7 +618,7 @@ bridge.onSessionApp((app) => {
 bridge.onSessionCancel(() => bridge.requestIdle());
 
 bridge.onSessionStage(({ stage }) => {
-  const labels = { transcribing: 'Transcribing…', polishing: 'Polishing…', inserting: 'Inserting…', thinking: 'Thinking…' };
+  const labels = { transcribing: 'Transcribing…', polishing: 'Polishing…', inserting: 'Inserting…', thinking: 'Thinking…', editing: 'Editing…' };
   if (labels[stage]) setState('thinking', { hint: labels[stage] });
 });
 

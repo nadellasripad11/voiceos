@@ -86,6 +86,16 @@ const DEFAULTS = {
     replacements: []              // [{ from: "my email", to: "me@example.com" }]
   },
 
+  // Edit Mode shares the dictation chord: with text selected and an
+  // instruction spoken ("make this more formal"), the selection is rewritten
+  // instead of typed over. Anything that does not read as an instruction stays
+  // ordinary dictation, because guessing wrong that way costs a retry while
+  // guessing wrong the other way overwrites what the user selected.
+  edit: {
+    enabled: true,
+    maxChars: 8000               // a selection larger than this is refused
+  },
+
   agent: {
     enabled: true,
     screenContext: true,

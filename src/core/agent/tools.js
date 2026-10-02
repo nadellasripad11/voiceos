@@ -212,6 +212,51 @@ async function readCursorContext(ctx, { radiusX = 620, radiusY = 380 } = {}) {
   return out;
 }
 
+// --- Small talk -----------------------------------------------------------
+
+/**
+ * Replies to the things people say that are not requests.
+ *
+ * "What's up?" was being routed to a web lookup, because it starts with "what"
+ * and the open-ended web pattern is the last resort. Searching the web for a
+ * greeting is both slow and faintly absurd, so the handful of conversational
+ * openers are answered outright: no network, no model, no wait.
+ *
+ * Several replies per kind, chosen at random, because an assistant that says
+ * the same seven words every single morning gets old fast.
+ */
+const SMALL_TALK = {
+  greeting: ['Hello.', 'Hello there.', 'Hi.'],
+  morning: ['Good morning.'],
+  afternoon: ['Good afternoon.'],
+  evening: ['Good evening.'],
+  howAreYou: ['Running well, thank you. What do you need?', 'All good here. What can I do?'],
+  thanks: ['Any time.', 'My pleasure.', 'Of course.'],
+  identity: ["I'm VoiceOS. I listen, I type, and I run things on this machine."],
+  capability: [
+    'Hold Ctrl and Alt to dictate anywhere, or Ctrl and Shift to ask me something. ' +
+    'Select text first and tell me how to change it, and I will rewrite it in place.'
+  ],
+  goodbye: ['Goodbye.', 'Talk soon.'],
+  sorry: ['No harm done.']
+};
+
+const smallTalkTools = () => [
+  {
+    name: 'small_talk',
+    appId: 'system',
+    description: 'Reply to a greeting, thanks, or a question about what you are. No lookup.',
+    parameters: obj({
+      kind: { type: 'string', description: Object.keys(SMALL_TALK).join(' | ') }
+    }),
+    run: async ({ kind }) => {
+      const options = SMALL_TALK[kind] || SMALL_TALK.greeting;
+      const line = options[Math.floor(Math.random() * options.length)];
+      return { ok: true, summary: line, spoken: line };
+    }
+  }
+];
+
 // --- Media ----------------------------------------------------------------
 
 const mediaTools = (ctx) => [
@@ -612,6 +657,7 @@ function openingFor(toolName) {
 function buildTools(ctx) {
   const all = [
     ...systemTools(ctx),
+    ...smallTalkTools(),
     // Only offered when a connection manager is present to resolve tokens.
     ...(ctx.connections ? googleTools(ctx) : []),
     ...mediaTools(ctx),
@@ -641,6 +687,7 @@ function toolSchemas(tools) {
 
 module.exports = {
   readCursorContext,
+  SMALL_TALK,
   openingFor,
   OPENINGS,
   buildTools,
