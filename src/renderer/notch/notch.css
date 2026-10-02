@@ -47,19 +47,15 @@ html, body {
   padding: 0 0 28px;
 }
 
-/* The strip the island hangs from. Full width and the same black, so the two
-   read as one surface fused to the top of the display. */
-.ledge {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 8px;
-  background: var(--island);
-}
-[data-position="bottom"] .ledge { top: auto; bottom: 0; }
+/* Parked against the top bezel it is square where it meets the edge; floating
+   free it is rounded all round, so the shape says whether it is docked. */
+[data-docked="free"] .card { border-radius: var(--radius); margin-top: 6px; }
+[data-docked="free"] .stage { padding-top: 6px; }
 
-.stage { position: relative; }
+/* The bar is the drag handle. Controls inside it opt back out. */
+.bar { -webkit-app-region: drag; cursor: grab; }
+.bar:active { cursor: grabbing; }
+.bar button, .bar input, .compose { -webkit-app-region: no-drag; }
 
 /* --- the island --- */
 .card {
@@ -385,3 +381,87 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .card, .sheet { animation: none; transition: none; }
 }
+
+
+/* --- type instead of speaking ---
+   The window is normally not focusable so dictation lands in the user's own
+   field. Clicking here asks the main process for focus, and gives it back on
+   blur, so the two input methods cannot fight over it. */
+.compose {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--island-edge);
+}
+[data-state="idle"] .compose,
+[data-state="answer"] .compose,
+[data-state="error"] .compose { display: flex; }
+[data-state="idle"] .compose { border-top: none; padding: 0 16px 11px; }
+
+#composeInput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--island-text);
+  background: var(--island-raised);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  padding: 8px 14px;
+  outline: none;
+}
+#composeInput::placeholder { color: var(--island-faint); }
+#composeInput:focus { border-color: rgba(10, 132, 255, 0.6); background: rgba(255, 255, 255, 0.1); }
+
+.send {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  color: #fff;
+  background: #0a84ff;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 140ms ease;
+}
+.send.is-ready { opacity: 1; }
+
+/* --- head actions --- */
+.head { align-items: center; }
+.head .meta { margin-left: auto; margin-right: 8px; }
+.head-actions { display: flex; gap: 4px; }
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--island-faint);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.icon-btn:hover { color: var(--island-text); background: var(--island-raised); }
+.icon-btn.is-busy { color: #0a84ff; }
+
+/* --- found --- */
+.found-wrap {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--island-edge);
+}
+.found-wrap[hidden] { display: none; }
+.found-label {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--island-faint);
+  margin-bottom: 8px;
+}
+.found { margin-top: 0; padding-top: 0; border-top: none; }

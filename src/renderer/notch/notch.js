@@ -19,14 +19,18 @@ const el = {
   wave: document.getElementById('wave'),
   timer: document.getElementById('timer'),
   appBadge: document.getElementById('appBadge'),
+  compose: document.getElementById('compose'),
+  composeInput: document.getElementById('composeInput'),
+  send: document.getElementById('send'),
+  replay: document.getElementById('replay'),
+  foundWrap: document.getElementById('foundWrap'),
+  foundLabel: document.getElementById('foundLabel'),
   close: document.getElementById('close'),
   body: document.getElementById('body'),
   askedText: document.getElementById('askedText'),
   answerText: document.getElementById('answerText'),
   foundList: document.getElementById('foundList'),
   meta: document.getElementById('meta'),
-  kbdA: document.getElementById('kbdA'),
-  kbdB: document.getElementById('kbdB'),
   confirm: document.getElementById('confirm'),
   confirmApp: document.getElementById('confirmApp'),
   confirmTitle: document.getElementById('confirmTitle'),
@@ -70,7 +74,7 @@ function clearBody() {
   el.askedText.textContent = '';
   el.answerText.innerHTML = '';
   el.foundList.innerHTML = '';
-  el.foundList.hidden = true;
+  el.foundWrap.hidden = true;
   el.meta.textContent = '';
 }
 
@@ -137,7 +141,7 @@ function showAnswer(text) {
 
 function showFound(items = []) {
   el.foundList.innerHTML = '';
-  if (!items.length) { el.foundList.hidden = true; return; }
+  if (!items.length) { el.foundWrap.hidden = true; return; }
   for (const item of items) {
     const li = document.createElement('li');
     li.className = 'found-item';
@@ -168,7 +172,7 @@ function showFound(items = []) {
     li.appendChild(main);
     el.foundList.appendChild(li);
   }
-  el.foundList.hidden = false;
+  el.foundWrap.hidden = false;
 }
 
 // --- Timer ---------------------------------------------------------------
@@ -512,9 +516,11 @@ bridge.onSessionIdle(({ hotkeys, position } = {}) => {
   // The footer states the chord that actually bound, which is not always the
   // preferred one.
   const dictate = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift';
-  const parts = prettyKey(dictate).split(' + ');
-  if (el.kbdA) el.kbdA.textContent = (parts[0] || 'ctrl').toLowerCase();
-  if (el.kbdB) el.kbdB.textContent = (parts[1] || 'shift').toLowerCase();
+  // The placeholder states the chord that actually bound, which is not always
+  // the preferred one.
+  if (el.composeInput) {
+    el.composeInput.placeholder = `Type or hold ${prettyKey(dictate)} to speak`;
+  }
 });
 
 bridge.onSessionStart(({ mode, config, position }) => {
@@ -612,8 +618,13 @@ let speaking = null;
 bridge.onSpeak(({ data }) => {
   if (!data) return;
   if (speaking) { try { speaking.pause(); } catch {} }
-  speaking = new Audio('data:audio/wav;base64,' + data);
-  speaking.play().catch((err) => console.warn('[tts] playback blocked:', err.message));
+  speaking = new Audio("data:audio/wav;base64," + data);
+  speaking.play()
+    .then(() => bridge.speechStatus({ ok: true }))
+    .catch((err) => {
+      console.error("[tts] playback blocked: " + err.message);
+      bridge.speechStatus({ ok: false, error: err.message });
+    });
 });
 
 // --- Card actions ---------------------------------------------------------
@@ -656,6 +667,11 @@ el.close.addEventListener('click', () => bridge.cancel());
 
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (composeFocused) {
+    el.composeInput.value = "";
+    el.composeInput.blur();
+    return;
+  }
   if (pendingConfirm) {
     const id = pendingConfirm.id;
     hideConfirm();
@@ -663,6 +679,59 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   bridge.cancel();
+});
+
+// --- Typing ---------------------------------------------------------------
+// The window is deliberately not focusable, so dictated text lands in the
+// user's own field rather than here. Typing needs focus, so it is asked for
+// on demand and handed straight back, and the two input paths never fight.
+
+let composeFocused = false;
+
+el.composeInput.addEventListener("mousedown", () => {
+  bridge.setFocusable(true);
+});
+
+el.composeInput.addEventListener("focus", () => {
+  composeFocused = true;
+  cancelCollapse();
+});
+
+el.composeInput.addEventListener("blur", () => {
+  composeFocused = false;
+  bridge.setFocusable(false);
+  if (el.stage.dataset.state === "answer") scheduleCollapse();
+});
+
+el.composeInput.addEventListener("input", () => {
+  el.send.classList.toggle("is-ready", el.composeInput.value.trim().length > 0);
+});
+
+el.compose.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = el.composeInput.value.trim();
+  if (!text) return;
+  el.composeInput.value = "";
+  el.send.classList.remove("is-ready");
+  el.composeInput.blur();
+  cancelCollapse();
+  clearBody();
+  showAsked(text);
+  setState("thinking", { hint: "Thinking\u2026" });
+  bridge.ask(text);
+});
+
+// --- Replay ---------------------------------------------------------------
+
+el.replay.addEventListener("click", async () => {
+  if (!currentResult) return;
+  const text = currentResult.answer || currentResult.text || "";
+  if (!text) return;
+  el.replay.classList.add("is-busy");
+  cancelCollapse();
+  try { await bridge.speak(text); } finally {
+    setTimeout(() => el.replay.classList.remove("is-busy"), 1200);
+  }
 });
 
 // --- Pointer passthrough --------------------------------------------------
@@ -685,7 +754,7 @@ function within(node, x, y) {
 window.addEventListener('mousemove', (e) => {
   const overCard = within(el.card, e.clientX, e.clientY);
   const overSheet = within(el.confirm, e.clientX, e.clientY);
-  setInteractive(overCard || overSheet);
+  setInteractive(overCard || overSheet || composeFocused);
 
   if (overCard || overSheet) {
     // Reaching for it means they want to read it, so stop the countdown — and
@@ -703,6 +772,9 @@ el.card.addEventListener('click', (e) => {
   if (e.target.closest('button')) return;
   if (el.stage.dataset.state === 'idle') bridge.startMode('dictation');
 });
+
+// Square against a bezel, rounded when floating free.
+bridge.onDocked((docked) => { document.documentElement.dataset.docked = docked || 'top'; });
 
 drawWave();
 setState('idle');

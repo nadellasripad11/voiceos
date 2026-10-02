@@ -3,23 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;" />
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src data:;" />
   <title>VoiceOS</title>
   <link rel="stylesheet" href="notch.css" />
 </head>
 <body>
   <!--
-    The island. Fused to the top bezel, square where it meets the edge and
-    rounded only below. At rest it is a small lozenge showing a level meter;
-    speaking expands it; an answer expands it further into a reading panel.
+    The island. A black surface that can be dragged anywhere on screen; it
+    fuses to the bezel when parked against an edge. At rest it is a small
+    lozenge; speaking expands it; an answer expands it into a reading panel.
   -->
   <div class="stage" id="stage" data-state="idle">
-    <!-- A hairline black strip across the full width that the island hangs from. -->
-    <div class="ledge" aria-hidden="true"></div>
     <div class="card" id="card">
 
-      <!-- Resting and listening: a single line -->
-      <div class="bar">
+      <!-- Resting and listening -->
+      <div class="bar" id="bar">
         <span class="orb orb-rest" aria-hidden="true"></span>
         <canvas id="wave" class="wave" width="560" height="44" aria-hidden="true"></canvas>
         <span class="app-badge-pill" id="appBadge" hidden></span>
@@ -31,25 +29,47 @@
       <div class="body" id="body">
         <div class="head">
           <span class="orb" id="orb" aria-hidden="true"></span>
-          <button class="close" id="close" title="Dismiss (Esc)" aria-label="Dismiss">
-            <svg viewBox="0 0 12 12" width="11" height="11">
-              <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/>
-            </svg>
-          </button>
+          <span class="meta" id="meta"></span>
+          <div class="head-actions">
+            <button class="icon-btn" id="replay" title="Say it again" aria-label="Say it again">
+              <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor"
+                   stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 7a5 5 0 1 1 1.5 3.5M2 10.5V7h3.5"/>
+              </svg>
+            </button>
+            <button class="icon-btn" id="close" title="Dismiss (Esc)" aria-label="Dismiss">
+              <svg viewBox="0 0 12 12" width="11" height="11">
+                <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7"
+                      stroke-linecap="round" fill="none"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         <p class="asked" id="askedText"></p>
         <div class="answer" id="answerText"></div>
 
-        <ul class="found" id="foundList" hidden></ul>
-
-        <div class="foot">
-          <span class="foot-hint">
-            Type or hold <kbd id="kbdA">ctrl</kbd> <kbd id="kbdB">shift</kbd> to speak
-          </span>
-          <span class="meta" id="meta"></span>
+        <div class="found-wrap" id="foundWrap" hidden>
+          <span class="found-label" id="foundLabel">Found</span>
+          <ul class="found" id="foundList"></ul>
         </div>
       </div>
+
+      <!-- Type instead of speaking -->
+      <form class="compose" id="compose">
+        <input
+          id="composeInput"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Type or hold ctrl shift to speak" />
+        <button type="submit" class="send" id="send" aria-label="Send" title="Send">
+          <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 7h9M7.5 3.5 11 7l-3.5 3.5"/>
+          </svg>
+        </button>
+      </form>
 
     </div>
 
@@ -73,7 +93,8 @@
 
         <button class="sheet-close" data-act="cancel" aria-label="Cancel">
           <svg viewBox="0 0 12 12" width="11" height="11">
-            <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+            <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.7"
+                  stroke-linecap="round" fill="none"/>
           </svg>
         </button>
       </div>
