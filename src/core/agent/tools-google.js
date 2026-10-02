@@ -317,42 +317,108 @@ const googleTools = (ctx) => [
     parameters: obj({ limit: num('Max items, default 10') }),
     run: async ({ limit = 10 } = {}) => {
       const courses = await api(ctx, 'google-classroom',
-        'https://classroom.googleapis.com/v1/courses?courseStates=ACTIVE&pageSize=10');
+        'https://classroom.googleapis.com/v1/courses?courseStates=ACTIVE&pageSize=20');
       const active = courses.courses || [];
-      if (!active.length) return { ok: true, summary: 'No active classes.' };
+      if (!active.length) return { ok: true, summary: 'No active classes.', spoken: 'You have no active classes.' };
 
-      const due = [];
+      const now = new Date();
+      const outstanding = [];
+      let total = 0;
+      let doneCount = 0;
+
       for (const course of active) {
         const work = await api(ctx, 'google-classroom',
-          `https://classroom.googleapis.com/v1/courses/${course.id}/courseWork?pageSize=${limit}`)
+          `https://classroom.googleapis.com/v1/courses/${course.id}/courseWork?pageSize=100`)
           .catch(() => ({}));
-        for (const item of work.courseWork || []) {
-          if (!item.dueDate) continue;
+        const items = work.courseWork || [];
+        if (!items.length) continue;
+
+        // What has actually been handed in. Without this, work already turned
+        // in was reported as still due, which is worse than useless.
+        // courseWork/- means "every assignment in this course" in one call.
+        const subs = await api(ctx, 'google-classroom',
+          `https://classroom.googleapis.com/v1/courses/${course.id}/courseWork/-/studentSubmissions?pageSize=200`)
+          .catch(() => ({}));
+        const stateOf = new Map((subs.studentSubmissions || []).map((s) => [s.courseWorkId, s.state]));
+
+        for (const item of items) {
+          total++;
+          const state = stateOf.get(item.id);
+          if (state === 'TURNED_IN' || state === 'RETURNED') { doneCount++; continue; }
+
+          // A due date is optional in Classroom, and in practice most work has
+          // none. Skipping undated work meant an assignment that was genuinely
+          // outstanding could never appear at all.
           const d = item.dueDate;
           const t = item.dueTime || {};
-          const when = new Date(Date.UTC(d.year, d.month - 1, d.day, t.hours || 23, t.minutes || 59));
-          // Only what is still ahead; past work is noise when you ask what is due.
-          if (when < new Date()) continue;
-          due.push({ course: course.name, title: item.title, when });
+          const when = d
+            ? new Date(Date.UTC(d.year, d.month - 1, d.day, t.hours == null ? 23 : t.hours, t.minutes == null ? 59 : t.minutes))
+            : null;
+
+          outstanding.push({
+            course: course.name,
+            title: item.title,
+            link: item.alternateLink,
+            when,
+            // Overdue and unsubmitted is exactly what a student wants to hear
+            // about, so it is reported rather than filtered out as "past".
+            overdue: Boolean(when && when < now)
+          });
         }
       }
 
-      if (!due.length) return { ok: true, summary: 'Nothing due that I can see.' };
-      due.sort((a, b) => a.when - b.when);
+      if (!outstanding.length) {
+        // Saying only "nothing due" left the user unable to tell whether it had
+        // looked, so what it did find is reported too.
+        const detail = total
+          ? `Nothing outstanding. All ${total} assignment${total === 1 ? '' : 's'} ` +
+            `in ${active.map((c) => c.name).join(', ')} ${total === 1 ? 'is' : 'are'} turned in.`
+          : `No assignments in ${active.map((c) => c.name).join(', ')}.`;
+        return {
+          ok: true,
+          summary: detail,
+          spoken: total ? `Nothing outstanding — all ${total} are turned in.` : 'There are no assignments posted.'
+        };
+      }
 
-      const soonest = due[0];
-      const spoken = `${due.length} ${due.length === 1 ? 'thing' : 'things'} due. ` +
-        `Soonest is ${soonest.title}, ${soonest.when.toLocaleDateString(undefined, { weekday: 'long' })}.`;
+      // Soonest first; undated last, since there is nothing to sort them by.
+      outstanding.sort((a, b) => {
+        if (a.when && b.when) return a.when - b.when;
+        if (a.when) return -1;
+        if (b.when) return 1;
+        return 0;
+      });
+
+      const overdue = outstanding.filter((o) => o.overdue);
+      const dated = outstanding.filter((o) => o.when && !o.overdue);
+      const undated = outstanding.filter((o) => !o.when);
+
+      const parts = [];
+      if (overdue.length) parts.push(`${overdue.length} overdue`);
+      if (dated.length) parts.push(`${dated.length} coming up`);
+      if (undated.length) parts.push(`${undated.length} with no due date`);
+      const soonest = dated[0] || overdue[0] || undated[0];
+      const spoken = `${parts.join(', ')}. ` +
+        (soonest.when
+          ? `${soonest.overdue ? 'Overdue' : 'Next'}: ${soonest.title}, ` +
+            `${soonest.when.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}.`
+          : `Starting with ${soonest.title}.`);
+
+      const describe = (o) =>
+        o.when
+          ? `${o.overdue ? 'OVERDUE' : 'Due'} ${o.when.toLocaleString()}`
+          : 'No due date';
 
       return {
         ok: true,
         spoken,
-        summary: due.slice(0, limit).map((d) =>
-          `${d.title} (${d.course}) — due ${d.when.toLocaleString()}`).join('\n'),
-        found: due.slice(0, limit).map((d) => ({
+        summary: outstanding.slice(0, limit).map((o) =>
+          `${o.title} (${o.course}) — ${describe(o)}`).join('\n'),
+        found: outstanding.slice(0, limit).map((o) => ({
           icon: 'canvas.webp',
-          title: `${d.title} — ${d.course}`,
-          subtitle: `Due ${d.when.toLocaleString()}`
+          title: `${o.title} — ${o.course}`,
+          subtitle: describe(o),
+          url: o.link
         }))
       };
     }

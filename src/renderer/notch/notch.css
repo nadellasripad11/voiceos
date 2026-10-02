@@ -81,8 +81,13 @@ html, body {
 [data-state="answer"] .card,
 [data-state="error"] .card { width: 560px; }
 
-/* Hovering swells it, the way the Dynamic Island does when reached for. */
-[data-state="idle"] .card:hover { width: 492px; }
+/* Hovering swells it, the way the Dynamic Island does when reached for.
+   Driven by data-hover, not :hover — this window is click-through and never
+   focusable, so it receives no mouse events of its own and native :hover can
+   never fire. The main process polls the cursor and reports it instead. The
+   :hover rule is kept for the preview harness, which is an ordinary page. */
+[data-state="idle"] .card:hover,
+[data-hover="true"] [data-state="idle"] .card { width: 492px; }
 
 /* --- the single line --- */
 .bar {
@@ -107,7 +112,8 @@ html, body {
   box-shadow: 0 0 10px rgba(74, 168, 255, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.55);
   transition: width 240ms cubic-bezier(0.32, 0.72, 0, 1), height 240ms cubic-bezier(0.32, 0.72, 0, 1);
 }
-[data-state="idle"] .card:hover .orb-rest { width: 25px; height: 25px; }
+[data-state="idle"] .card:hover .orb-rest,
+[data-hover="true"] [data-state="idle"] .orb-rest { width: 25px; height: 25px; }
 
 .wave { display: none; flex: 1; min-width: 0; height: 26px; }
 [data-state="listening"] .wave,
