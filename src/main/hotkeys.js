@@ -26,7 +26,11 @@ class HoldToTalk {
    * @param {number} [opts.armMs] how long both modifiers must be held before
    *   this counts as a hold rather than the start of an ordinary shortcut
    */
-  constructor({ onStart, onStop, logger = console, armMs = 220 } = {}) {
+  constructor({ onStart, onStop, logger = console, armMs = 220, bindings } = {}) {
+    // Which chord drives which mode, so the setting is real rather than
+    // decorative. Ctrl+Shift is the chord people reach for first, so by
+    // default it drives the agent.
+    this.bindings = bindings || { agent: 'shift', dictation: 'alt' };
     this.onStart = onStart;
     this.onStop = onStop;
     this.logger = logger;
@@ -49,8 +53,11 @@ class HoldToTalk {
   /** The mode the currently held modifiers correspond to, if any. */
   modeForHeld() {
     if (!this.held.has('ctrl')) return null;
-    if (this.held.has('shift') && !this.held.has('alt')) return 'dictation';
-    if (this.held.has('alt') && !this.held.has('shift')) return 'agent';
+    const hasShift = this.held.has('shift');
+    const hasAlt = this.held.has('alt');
+    // Exactly one of the two, so Ctrl+Shift+Alt is not read as either.
+    if (hasShift && !hasAlt) return this.bindings.shift || null;
+    if (hasAlt && !hasShift) return this.bindings.alt || null;
     return null;
   }
 
@@ -116,7 +123,9 @@ class HoldToTalk {
       case 'ready':
         this.available = true;
         this.restarts = 0;
-        this.logger.info?.('[hotkeys] hold-to-talk active: Ctrl+Shift dictate, Ctrl+Alt ask');
+          this.logger.info?.(
+          `[hotkeys] hold-to-talk active: Ctrl+Shift ${this.bindings.shift}, Ctrl+Alt ${this.bindings.alt}`
+        );
         break;
       case 'error':
         this.available = false;
@@ -209,7 +218,10 @@ class HoldToTalk {
     return {
       available: this.available,
       running: this.running,
-      bindings: { dictation: 'Ctrl + Shift', agent: 'Ctrl + Alt' },
+      bindings: {
+        dictation: `Ctrl + ${this.bindings.shift === 'dictation' ? 'Shift' : 'Alt'}`,
+        agent: `Ctrl + ${this.bindings.shift === 'agent' ? 'Shift' : 'Alt'}`
+      },
       mode: 'hold'
     };
   }

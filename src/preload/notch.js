@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('voiceos', {
   setInteractive: (v) => ipcRenderer.send('voiceos:notch-interactive', v),
   startMode: (mode) => ipcRenderer.send('voiceos:start-mode', mode),
   setFocusable: (v) => ipcRenderer.send('voiceos:set-focusable', v),
+  setHitRects: (rects) => ipcRenderer.send('voiceos:hit-rects', rects),
+  onHover: (fn) => on('notch-hover', fn),
   ask: (text) => ipcRenderer.invoke('voiceos:ask', text),
   speak: (text) => ipcRenderer.invoke('voiceos:speak', text),
   speechStatus: (s) => ipcRenderer.send('voiceos:speech-status', s),

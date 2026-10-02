@@ -38,6 +38,16 @@ async function findOurElement(bridge, { name, controlType } = {}) {
  * @returns {Promise<{ok: boolean, reason?: string, window?: object}>}
  */
 async function assertOurWindowAt(bridge, x, y) {
+  // The overlay windows are click-through, so WindowFromPoint returns whatever
+  // is underneath them. Their geometry is known, so check that first.
+  const { config } = require('../../src/core/config');
+  const notch = config.get('ui.notchBounds', null);
+  if (notch &&
+      x >= notch.x && x <= notch.x + notch.width &&
+      y >= notch.y && y <= notch.y + notch.height) {
+    return { ok: true, window: { process: 'electron', title: 'VoiceOS notch', bounds: notch } };
+  }
+
   const win = await bridge.windowAt(x, y);
   if (!win) return { ok: false, reason: `nothing resolvable at ${x},${y}` };
   if (!/electron/i.test(win.process)) {

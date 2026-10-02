@@ -734,39 +734,35 @@ el.replay.addEventListener("click", async () => {
   }
 });
 
-// --- Pointer passthrough --------------------------------------------------
-// The window covers a band across the top of the screen permanently, so it only
-// takes mouse input while the pointer is over the card itself.
+// --- Hit testing ----------------------------------------------------------
+// Electron does not deliver mouse moves to a window that is both click-through
+// and non-focusable, so this window cannot tell when the pointer is over it.
+// The main process polls the cursor instead; all it needs from here is where
+// the island currently is.
 
-let interactive = false;
-function setInteractive(next) {
-  if (interactive === next) return;
-  interactive = next;
-  bridge.setInteractive(next);
-}
-
-function within(node, x, y) {
-  if (!node || node.hidden) return false;
-  const r = node.getBoundingClientRect();
-  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-}
-
-window.addEventListener('mousemove', (e) => {
-  const overCard = within(el.card, e.clientX, e.clientY);
-  const overSheet = within(el.confirm, e.clientX, e.clientY);
-  setInteractive(overCard || overSheet || composeFocused);
-
-  if (overCard || overSheet) {
-    // Reaching for it means they want to read it, so stop the countdown — and
-    // bring the answer back if it has already gone.
-    if (el.stage.dataset.state === 'idle') restoreAnswer();
-    else cancelCollapse();
-  } else if (el.stage.dataset.state === 'answer' && !collapseTimer) {
-    // Pointer left while an answer is up: start the countdown again.
-    scheduleCollapse(1500);
+/** Reports the interactive rectangles in window-relative CSS pixels. */
+function reportHitRect() {
+  const rects = [];
+  const card = el.card.getBoundingClientRect();
+  if (card.width > 0) {
+    rects.push({ x: card.left, y: card.top, width: card.width, height: card.height });
   }
-});
-window.addEventListener('mouseleave', () => setInteractive(false));
+  if (el.confirm && !el.confirm.hidden) {
+    const sheet = el.confirm.getBoundingClientRect();
+    if (sheet.width > 0) {
+      rects.push({ x: sheet.left, y: sheet.top, width: sheet.width, height: sheet.height });
+    }
+  }
+  bridge.setHitRects(rects);
+}
+
+// The island changes shape with every state, so the rectangle is re-reported
+// whenever it resizes or the state attribute changes.
+new ResizeObserver(() => reportHitRect()).observe(el.card);
+new MutationObserver(() => reportHitRect())
+  .observe(el.stage, { attributes: true, attributeFilter: ['data-state'] });
+setTimeout(reportHitRect, 60);
+
 
 el.card.addEventListener('click', (e) => {
   if (e.target.closest('button')) return;
@@ -775,6 +771,15 @@ el.card.addEventListener('click', (e) => {
 
 // Square against a bezel, rounded when floating free.
 bridge.onDocked((docked) => { document.documentElement.dataset.docked = docked || 'top'; });
+
+// Hover is reported by the main process, since this window never receives the
+// move events itself.
+bridge.onHover((over) => {
+  document.documentElement.dataset.hover = over ? 'true' : 'false';
+  if (!over) return;
+  if (el.stage.dataset.state === 'idle') restoreAnswer();
+  else cancelCollapse();
+});
 
 drawWave();
 setState('idle');

@@ -4,19 +4,15 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; script-src 'self'; style-src 'self';" />
-  <title>VoiceOS target</title>
+  <title>VoiceOS trail</title>
   <link rel="stylesheet" href="highlight.css" />
 </head>
 <body>
   <!--
-    The targeting overlay. Covers the whole screen, click-through, and draws an
-    outline around whatever is under the cursor while Agent Mode is listening,
-    so the user can see what VoiceOS will read before they finish asking.
+    The cursor trail. Covers the display, never takes a click, and draws only
+    while the pointer is moving during an Agent Mode session.
   -->
-  <div class="frame" id="frame" hidden>
-    <div class="edge"></div>
-    <span class="tag" id="tag">Point to show VoiceOS</span>
-  </div>
+  <canvas id="trail"></canvas>
   <script src="highlight.js"></script>
 </body>
 </html>

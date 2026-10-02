@@ -1,11 +1,11 @@
 'use strict';
-/** Preload bridge for the targeting overlay. Receive-only: it never acts. */
+/** Preload bridge for the cursor trail. Receive-only: it never acts. */
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('voiceos', {
-  onTarget: (fn) => {
+  onPoint: (fn) => {
     const wrapped = (_e, payload) => fn(payload);
-    ipcRenderer.on('highlight-target', wrapped);
-    return () => ipcRenderer.removeListener('highlight-target', wrapped);
+    ipcRenderer.on('trail-point', wrapped);
+    return () => ipcRenderer.removeListener('trail-point', wrapped);
   }
 });

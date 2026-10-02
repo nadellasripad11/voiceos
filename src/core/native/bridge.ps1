@@ -84,6 +84,59 @@ public class VOSNative {
         return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
     }
 
+    const uint MOUSEEVENTF_MOVE = 0x0001;
+    const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+    const int INPUT_MOUSE = 0;
+
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int nIndex);
+
+    static INPUT MouseInput(int dx, int dy, uint flags) {
+        INPUT i = new INPUT();
+        i.type = INPUT_MOUSE;
+        i.u.mi.dx = dx;
+        i.u.mi.dy = dy;
+        i.u.mi.mouseData = 0;
+        i.u.mi.dwFlags = flags;
+        i.u.mi.time = 0;
+        i.u.mi.dwExtraInfo = IntPtr.Zero;
+        return i;
+    }
+
+    // A real move event, as opposed to SetCursorPos. Electron only forwards
+    // mouse messages to a click-through window for genuine input, so warping
+    // the pointer is not enough to wake an overlay up.
+    public static uint MouseMove(int x, int y) {
+        int sw = GetSystemMetrics(0);
+        int sh = GetSystemMetrics(1);
+        int ax = (int)((x * 65535.0) / Math.Max(1, sw - 1));
+        int ay = (int)((y * 65535.0) / Math.Max(1, sh - 1));
+        INPUT[] inputs = new INPUT[1];
+        inputs[0] = MouseInput(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE);
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    // A real click at a screen point. SendInput's absolute coordinates are a
+    // 0..65535 range across the virtual desktop, not pixels.
+    public static uint MouseClick(int x, int y, bool rightButton) {
+        int sw = GetSystemMetrics(0);
+        int sh = GetSystemMetrics(1);
+        int ax = (int)((x * 65535.0) / Math.Max(1, sw - 1));
+        int ay = (int)((y * 65535.0) / Math.Max(1, sh - 1));
+
+        uint down = rightButton ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_LEFTDOWN;
+        uint up = rightButton ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
+
+        INPUT[] inputs = new INPUT[3];
+        inputs[0] = MouseInput(ax, ay, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE);
+        inputs[1] = MouseInput(ax, ay, down | MOUSEEVENTF_ABSOLUTE);
+        inputs[2] = MouseInput(ax, ay, up | MOUSEEVENTF_ABSOLUTE);
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
     // Unicode synthesis, one UTF-16 code unit at a time. Works in fields that
     // reject clipboard paste, and handles surrogate pairs (emoji) correctly
     // because each code unit is sent as its own event.
@@ -419,6 +472,14 @@ function Invoke-BridgeCommand($req) {
   switch ($req.cmd) {
     'ping' { return @{ ok = $true; pong = $true; hostPid = $PID } }
 
+    'screenInfo' {
+      $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+      return @{
+        ok = $true
+        x = $vs.Left; y = $vs.Top; width = $vs.Width; height = $vs.Height
+      }
+    }
+
     'getCursorPos' {
       $p = New-Object VOSNative+POINT
       [void][VOSNative]::GetCursorPos([ref]$p)
@@ -505,6 +566,16 @@ function Invoke-BridgeCommand($req) {
 
     'keys' {
       [void][VOSNative]::KeyCombo((Resolve-Combo $req.combo))
+      return @{ ok = $true }
+    }
+
+    'mouseMove' {
+      [void][VOSNative]::MouseMove([int]$req.x, [int]$req.y)
+      return @{ ok = $true }
+    }
+
+    'mouseClick' {
+      [void][VOSNative]::MouseClick([int]$req.x, [int]$req.y, [bool]$req.right)
       return @{ ok = $true }
     }
 

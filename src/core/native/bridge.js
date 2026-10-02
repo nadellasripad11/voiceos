@@ -154,6 +154,9 @@ class NativeBridge {
 
   ping() { return this.call('ping', {}, { timeoutMs: 5000 }); }
 
+  /** The screen rectangle as this bridge sees it, for scale detection. */
+  screenInfo() { return this.call('screenInfo'); }
+
   async cursorPos() {
     const r = await this.call('getCursorPos');
     return { x: r.x, y: r.y };
@@ -231,6 +234,10 @@ class NativeBridge {
   }
 
   keys(combo) { return this.call('keys', { combo }); }
+  /** A real mouse click at a screen point, as opposed to a UIA invoke. */
+  /** A genuine move event, which a click-through overlay can actually see. */
+  mouseMove(x, y) { return this.call('mouseMove', { x, y }); }
+  mouseClick(x, y, { right = false } = {}) { return this.call('mouseClick', { x, y, right }); }
   keyDown(combo) { return this.call('keyDown', { combo }); }
   keyUp(combo) { return this.call('keyUp', { combo }); }
   focusWindow(hwnd) { return this.call('focusWindow', { hwnd }); }

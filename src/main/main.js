@@ -206,6 +206,7 @@ async function initServices() {
   // PowerShell and assembly loading, which would land on the user's first
   // dictation instead of on app launch.
   services.bridge.start()
+    .then(() => measureBridgeScale())
     .then(() => logger.info('native bridge ready'))
     .catch((err) => logger.error(`native bridge failed to start: ${err.message}`));
 
@@ -251,6 +252,91 @@ function reloadServices() {
 
 const NOTCH_WIDTH = 600;
 const NOTCH_HEIGHT = 520;
+
+/**
+ * Where the island is actually clickable, in window-relative CSS pixels.
+ * Reported by the renderer, because only it knows the current layout.
+ */
+let hitRects = [];
+let pointerOverNotch = false;
+let hoverTimer = null;
+
+/**
+ * Polls the pointer and toggles click-through as it crosses the island.
+ *
+ * Electron does not deliver mouse moves to a window that is click-through and
+ * non-focusable, so the renderer cannot do this itself. Polling here is the
+ * only thing that makes the island reachable at all.
+ */
+function startHoverWatch() {
+  if (hoverTimer) return;
+  hoverTimer = setInterval(async () => {
+    const win = windows.notch;
+    if (!win || win.isDestroyed() || !win.isVisible() || !hitRects.length) return;
+
+    try {
+      const pos = await services.bridge.cursorPos();
+      const bounds = win.getBounds();
+
+      // Converted with the measured ratio rather than an assumed one.
+      const x = toElectron(pos.x) - bounds.x;
+      const y = toElectron(pos.y) - bounds.y;
+
+      const inside = hitRects.some((r) =>
+        x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height);
+
+      if (inside === pointerOverNotch) return;
+      pointerOverNotch = inside;
+      logger.info(`[hover] pointer ${inside ? 'entered' : 'left'} the island at ${Math.round(x)},${Math.round(y)}`);
+
+      // Clearing ignore-mouse-events is not enough on Windows: a window
+      // created with focusable:false carries WS_EX_NOACTIVATE and clicks pass
+      // straight through it. Focusability has to come back with it.
+      //
+      // Being focusable does not steal focus; only an actual click does. So
+      // the user's own field keeps focus right up until they choose to click
+      // the island, which is exactly when they want it.
+      win.setIgnoreMouseEvents(!inside, { forward: false });
+      win.setFocusable(inside);
+      win.webContents.send('notch-hover', inside);
+    } catch {
+      // A dropped poll is harmless; the next one corrects it.
+    }
+  }, 90);
+}
+
+function stopHoverWatch() {
+  if (hoverTimer) { clearInterval(hoverTimer); hoverTimer = null; }
+  pointerOverNotch = false;
+}
+
+/**
+ * How many bridge pixels there are per Electron pixel.
+ *
+ * 1 when the bridge reports device-independent pixels, 2 on a 200% display
+ * when it reports physical ones. Measured rather than assumed, because it
+ * depends on the host's DPI awareness.
+ */
+let bridgeScale = 1;
+
+async function measureBridgeScale() {
+  try {
+    const info = await services.bridge.screenInfo();
+    const primary = screen.getPrimaryDisplay();
+    const ratio = info.width / primary.bounds.width;
+    // Snap to a sensible factor; anything else means the displays changed
+    // mid-measurement and 1 is the safer reading.
+    bridgeScale = [1, 1.25, 1.5, 1.75, 2, 2.5, 3].reduce(
+      (best, candidate) => Math.abs(candidate - ratio) < Math.abs(best - ratio) ? candidate : best, 1);
+    logger.info(`[scale] bridge reports ${info.width}x${info.height}, Electron ${primary.bounds.width}x${primary.bounds.height} -> scale ${bridgeScale}`);
+  } catch (err) {
+    bridgeScale = 1;
+    logger.warn(`[scale] could not measure, assuming 1: ${err.message}`);
+  }
+}
+
+/** Bridge coordinates to Electron ones. */
+const toElectron = (v) => v / bridgeScale;
 
 function createNotch() {
   if (windows.notch && !windows.notch.isDestroyed()) return windows.notch;
@@ -358,6 +444,7 @@ function reportDocking() {
 function showNotch() {
   const win = createNotch();
   positionNotch();
+  startHoverWatch();
   // showInactive, never show(): show() would focus the overlay and the text
   // would land in the wrong place.
   win.showInactive();
@@ -378,6 +465,7 @@ function idleNotch() {
     return;
   }
   positionNotch();
+  startHoverWatch();
   windows.notch.showInactive();
   broadcast('session-idle', { hotkeys: activeHotkeys, position: config.get('ui.notchPosition', 'top') });
 }
@@ -428,14 +516,31 @@ function createHighlight() {
   return win;
 }
 
-/** Polls what is under the cursor and feeds the overlay. */
-let targetTimer = null;
-let targetInFlight = false;
-let lastTargetKey = '';
+/**
+ * Follows the pointer and feeds the trail.
+ *
+ * Only the cursor position is read, fast enough to draw a smooth stroke. The
+ * previous version asked UI Automation what sat under the pointer on every
+ * tick, which cost a few hundred milliseconds a call and reported a whole
+ * element when what is wanted is the path the user swept over.
+ */
+let trailTimer = null;
+let lastPoint = null;
 
-function startTargeting() {
-  if (!config.get('agent.cursorContext', true)) return;
-  if (config.get('privacy.privateMode')) return;
+/** Resolves once the overlay's renderer is ready to receive points. */
+function whenHighlightReady(win) {
+  if (!win.webContents.isLoading()) return Promise.resolve();
+  return new Promise((resolve) => {
+    // Points sent before the renderer has subscribed are dropped on the floor,
+    // which showed up as a trail that only began part way through the gesture.
+    win.webContents.once('did-finish-load', resolve);
+    setTimeout(resolve, 2000);
+  });
+}
+
+async function startTargeting() {
+  if (!config.get('agent.cursorContext', true)) return logger.debug('[trail] cursorContext off');
+  if (config.get('privacy.privateMode')) return logger.debug('[trail] private mode');
 
   const win = createHighlight();
   const display = screen.getPrimaryDisplay();
@@ -443,47 +548,47 @@ function startTargeting() {
   win.showInactive();
 
   stopTargeting({ keepWindow: true });
-  targetTimer = setInterval(async () => {
-    // A UIA lookup takes a few hundred milliseconds, so never stack them.
-    if (targetInFlight) return;
-    targetInFlight = true;
+  lastPoint = null;
+  await whenHighlightReady(win);
+  logger.info(`[trail] tracking on ${display.bounds.width}x${display.bounds.height} at scale ${display.scaleFactor}`);
+
+  trailTimer = setInterval(async () => {
     try {
-      const { x, y } = await services.bridge.cursorPos();
-      const element = await services.bridge.elementAt(x, y);
-      if (!element || !element.bounds) return;
+      const pos = await services.bridge.cursorPos();
 
-      // Only repaint when the target actually changed, so the outline does not
-      // jitter while the pointer sits still.
-      const key = `${element.bounds.x},${element.bounds.y},${element.bounds.width},${element.bounds.height}`;
-      if (key === lastTargetKey) return;
-      lastTargetKey = key;
+      // Converted with the measured ratio: assuming one put the trail at a
+      // multiple of the right place.
+      const x = toElectron(pos.x) - display.bounds.x;
+      const y = toElectron(pos.y) - display.bounds.y;
 
-      const label = (element.name || '').trim().slice(0, 70) ||
-        (element.controlType ? `This ${String(element.controlType).toLowerCase()}` : 'Ask about this');
+      // Nothing is sent while the pointer is still, so a stationary cursor
+      // draws nothing at all.
+      if (lastPoint && Math.abs(x - lastPoint.x) < 1 && Math.abs(y - lastPoint.y) < 1) return;
+      lastPoint = { x, y };
 
       if (windows.highlight && !windows.highlight.isDestroyed()) {
-        windows.highlight.webContents.send('highlight-target', {
-          bounds: element.bounds,
-          label,
-          screen: { x: display.bounds.x, y: display.bounds.y }
-        });
+        windows.highlight.webContents.send('trail-point', { x, y });
       }
     } catch {
-      // Some surfaces expose nothing; that is normal, not an error.
-    } finally {
-      targetInFlight = false;
+      // Reading the cursor can fail transiently; a dropped frame is harmless.
     }
-  }, 220);
+  }, 40);
 }
 
 function stopTargeting({ keepWindow = false } = {}) {
-  if (targetTimer) { clearInterval(targetTimer); targetTimer = null; }
-  lastTargetKey = '';
-  if (!keepWindow && windows.highlight && !windows.highlight.isDestroyed()) {
-    windows.highlight.webContents.send('highlight-target', null);
-    windows.highlight.hide();
+  if (trailTimer) { clearInterval(trailTimer); trailTimer = null; }
+  lastPoint = null;
+  if (windows.highlight && !windows.highlight.isDestroyed()) {
+    // Stop extending the stroke; it fades on its own rather than vanishing.
+    windows.highlight.webContents.send('trail-point', null);
+    if (!keepWindow) {
+      setTimeout(() => {
+        if (windows.highlight && !windows.highlight.isDestroyed()) windows.highlight.hide();
+      }, 1500);
+    }
   }
 }
+
 
 const RAIL_WIDTH = 340;
 
@@ -639,8 +744,15 @@ function registerHotkeys() {
   globalShortcut.unregisterAll();
 
   if (!holdToTalk) {
+    const keys = config.get('hotkeys', {});
+    // Config names the chord per mode; the hook wants it keyed by modifier.
+    const bindings = {
+      shift: String(keys.agent || '').includes('Shift') ? 'agent' : 'dictation',
+      alt: String(keys.agent || '').includes('Shift') ? 'dictation' : 'agent'
+    };
     holdToTalk = new HoldToTalk({
       logger,
+      bindings,
       onStart: (mode) => startSession(mode),
       onStop: () => stopSession()
     });
@@ -648,7 +760,12 @@ function registerHotkeys() {
 
   const started = holdToTalk.running || holdToTalk.start();
   if (started) {
-    activeHotkeys = { dictation: 'Ctrl+Shift', agent: 'Ctrl+Alt', edit: null };
+    const keys2 = config.get('hotkeys', {});
+    activeHotkeys = {
+      dictation: keys2.dictation || 'Ctrl+Alt',
+      agent: keys2.agent || 'Ctrl+Shift',
+      edit: null
+    };
     // The helper reports readiness a moment later. If it never does, fall back
     // rather than leaving the user with no way to talk.
     setTimeout(() => {
@@ -728,7 +845,7 @@ function startSession(mode) {
   // the moment recording begins.
   activeAppBadge().then((app) => app && broadcast('session-app', app)).catch(() => {});
   // Only Agent Mode uses the cursor as context, so only it needs the overlay.
-  if (mode === 'agent') startTargeting();
+  if (mode === 'agent') startTargeting().catch((err) => logger.warn(`[trail] ${err.message}`));
   logger.info(`session start: ${mode}`);
 }
 
@@ -972,6 +1089,14 @@ function registerIpc() {
   });
 
   ipcMain.on('voiceos:request-idle', () => idleNotch());
+
+  ipcMain.on('voiceos:hit-rects', (_e, rects) => {
+    const next = Array.isArray(rects) ? rects : [];
+    if (!hitRects.length && next.length) {
+      logger.info(`[hover] island hit area: ${Math.round(next[0].width)}x${Math.round(next[0].height)}`);
+    }
+    hitRects = next;
+  });
 
   /**
    * Focus for the compose field only.
@@ -1272,6 +1397,10 @@ if (!app.requestSingleInstanceLock()) {
     await initServices();
     registerIpc();
     registerHotkeys();
+    screen.on('display-metrics-changed', () => measureBridgeScale());
+    screen.on('display-added', () => measureBridgeScale());
+    screen.on('display-removed', () => measureBridgeScale());
+
     buildTray();
     createNotch();
     showRail();
@@ -1295,6 +1424,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    stopHoverWatch();
     if (holdToTalk) holdToTalk.shutdown();
     if (services.bridge) services.bridge.stop();
   });
