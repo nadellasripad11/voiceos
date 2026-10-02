@@ -20,6 +20,42 @@ function normalizeToolCall(raw, index) {
   };
 }
 
+/**
+ * Reads a newline-delimited JSON stream, handing each object to `onObject`.
+ *
+ * Both Ollama (bare NDJSON) and OpenAI-compatible endpoints (SSE, so each line
+ * is prefixed with `data: `) stream one JSON object per line, so one reader
+ * serves both. Chunks arrive split mid-line, hence the buffer.
+ */
+async function readJsonLines(res, onObject) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let nl;
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      let line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      if (line.startsWith('data:')) line = line.slice(5).trim();
+      if (!line || line === '[DONE]') continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch { continue; }
+      onObject(obj);
+    }
+  }
+
+  const tail = buffer.trim();
+  if (tail && tail !== '[DONE]') {
+    try { onObject(JSON.parse(tail.replace(/^data:\s*/, ''))); } catch { /* partial trailing chunk */ }
+  }
+}
+
 class LlmProvider {
   constructor(opts = {}) {
     this.opts = opts;
@@ -28,8 +64,16 @@ class LlmProvider {
   get name() { return 'abstract'; }
   async available() { return false; }
   async listModels() { return []; }
+  /** Whether this provider can deliver tokens as they are generated. */
+  get streams() { return false; }
+  /**
+   * @param {object} req
+   * @param {(chunk: string, full: string) => void} [req.onToken] called with
+   *   each piece of text as it is generated. Providers that cannot stream call
+   *   it once with the finished text, so callers need no special case.
+   */
   // eslint-disable-next-line no-unused-vars
-  async chat({ messages, tools, model, temperature, maxTokens, signal, images }) {
+  async chat({ messages, tools, model, temperature, maxTokens, signal, images, onToken }) {
     throw new Error('not implemented');
   }
 }
@@ -62,11 +106,34 @@ class OllamaProvider extends LlmProvider {
     return models.map((m) => ({ id: m.name, size: m.size, family: m.details && m.details.family }));
   }
 
-  async chat({ messages, tools, model, temperature = 0.2, maxTokens, signal, images }) {
+  get streams() { return true; }
+
+  /**
+   * Loads the model without asking it anything.
+   *
+   * A cold model costs about twelve seconds on first use against under two when
+   * resident — by far the largest single delay in the whole pipeline — so it is
+   * paid at launch instead of in front of the user. Ollama treats an empty
+   * prompt as a load-only request.
+   */
+  async warm(model, { signal } = {}) {
+    const res = await fetch(`${this.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: [], keep_alive: this.keepAlive }),
+      signal
+    });
+    if (!res.ok) throw new Error(`Ollama could not load ${model} (HTTP ${res.status})`);
+    await res.json().catch(() => null);
+    return true;
+  }
+
+  async chat({ messages, tools, model, temperature = 0.2, maxTokens, signal, images, onToken }) {
+    const stream = Boolean(onToken);
     const body = {
       model,
       messages: messages.map((m) => toOllamaMessage(m, images)),
-      stream: false,
+      stream,
       keep_alive: this.keepAlive,
       options: {
         temperature,
@@ -91,6 +158,41 @@ class OllamaProvider extends LlmProvider {
       const detail = (await res.text()).slice(0, 400);
       throw new Error(`Ollama chat failed (HTTP ${res.status}): ${detail}`);
     }
+
+    if (stream) {
+      // One NDJSON object per token, with the usage counters on the last one.
+      let text = '';
+      let toolCalls = [];
+      let last = null;
+
+      await readJsonLines(res, (obj) => {
+        last = obj;
+        const msg = obj.message || {};
+        if (msg.content) {
+          text += msg.content;
+          onToken(msg.content, text);
+        }
+        // Ollama emits tool calls complete in a single object rather than
+        // piecewise, so they can simply be collected.
+        if (msg.tool_calls && msg.tool_calls.length) {
+          toolCalls = toolCalls.concat(msg.tool_calls);
+        }
+      });
+
+      return {
+        text: text.trim(),
+        toolCalls: toolCalls.map((c, i) =>
+          normalizeToolCall({ id: c.id, name: c.function && c.function.name, args: c.function && c.function.arguments }, i)),
+        raw: last,
+        usage: {
+          promptTokens: last && last.prompt_eval_count,
+          completionTokens: last && last.eval_count,
+          ms: last && last.total_duration ? Math.round(last.total_duration / 1e6) : undefined
+        },
+        model
+      };
+    }
+
     const data = await res.json();
     const msg = data.message || {};
     return {
@@ -271,13 +373,17 @@ class OpenAiCompatibleProvider extends LlmProvider {
     return data.map((m) => ({ id: m.id }));
   }
 
-  async chat({ messages, tools, model, temperature = 0.2, maxTokens, signal }) {
+  get streams() { return true; }
+
+  async chat({ messages, tools, model, temperature = 0.2, maxTokens, signal, onToken }) {
     if (!this.apiKey) {
       throw new Error(`No ${this.providerName} API key set. Add one in Settings → Brain (free at console.groq.com).`);
     }
+    const stream = Boolean(onToken);
     const body = {
       model,
       temperature,
+      ...(stream ? { stream: true } : {}),
       messages: messages.map((m) => {
         if (m.role === 'tool') {
           return {
@@ -321,6 +427,40 @@ class OpenAiCompatibleProvider extends LlmProvider {
       const detail = (await res.text()).slice(0, 400);
       throw new Error(`${this.providerName} chat failed (HTTP ${res.status}): ${detail}`);
     }
+
+    if (stream) {
+      // SSE deltas. Unlike Ollama, tool calls arrive piecewise: the name comes
+      // in one delta and the arguments accumulate across several, keyed by
+      // index, so they have to be reassembled rather than just collected.
+      let text = '';
+      const calls = new Map();
+
+      await readJsonLines(res, (obj) => {
+        const delta = ((obj.choices || [])[0] || {}).delta || {};
+        if (delta.content) {
+          text += delta.content;
+          onToken(delta.content, text);
+        }
+        for (const c of delta.tool_calls || []) {
+          const key = c.index != null ? c.index : calls.size;
+          const prev = calls.get(key) || { id: c.id, name: '', args: '' };
+          if (c.id) prev.id = c.id;
+          if (c.function && c.function.name) prev.name = c.function.name;
+          if (c.function && c.function.arguments) prev.args += c.function.arguments;
+          calls.set(key, prev);
+        }
+      });
+
+      return {
+        text: text.trim(),
+        toolCalls: [...calls.values()].map((c, i) =>
+          normalizeToolCall({ id: c.id, name: c.name, args: safeJson(c.args) }, i)),
+        raw: null,
+        usage: {},
+        model
+      };
+    }
+
     const data = await res.json();
     const msg = ((data.choices || [])[0] || {}).message || {};
     return {

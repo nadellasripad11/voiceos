@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('voiceos', {
   onSessionStage: (fn) => on('session-stage', fn),
   onSessionResult: (fn) => on('session-result', fn),
   onAgentResult: (fn) => on('agent-result', fn),
+  onAgentPartial: (fn) => on('agent-partial', fn),
   onSpeak: (fn) => on('speak', fn),
   onAgentConfirm: (fn) => on('agent-confirm', fn),
   onSessionError: (fn) => on('session-error', fn)

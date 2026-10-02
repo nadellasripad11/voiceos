@@ -676,22 +676,93 @@ bridge.onAgentConfirm((confirm) => showConfirm(confirm));
 bridge.onSessionError(({ message, detail }) => fail(message, detail));
 
 /**
- * Plays a spoken reply.
+ * Plays a spoken reply, one clip after another.
  *
- * Only one reply is ever audible: a new answer cuts off the previous one rather
- * than letting two voices overlap.
+ * A long reply is synthesized a sentence at a time so speech can start before
+ * the model has finished writing, which means several clips belong to one
+ * answer and must play back to back. Replacing the audio element on each clip
+ * would talk over itself, so clips are queued and played in sequence.
+ *
+ * Only one answer is ever audible: a new turn drops whatever the previous one
+ * had left to say.
  */
 let speaking = null;
-bridge.onSpeak(({ data }) => {
+let speechQueue = [];
+let speechTurn = 0;
+let speechDraining = false;
+
+async function drainSpeech() {
+  if (speechDraining) return;
+  speechDraining = true;
+  try {
+    while (speechQueue.length) {
+      const clip = speechQueue.shift();
+      if (clip.turn !== speechTurn) continue;   // belongs to a superseded answer
+      speaking = new Audio('data:audio/wav;base64,' + clip.data);
+      try {
+        await new Promise((resolve, reject) => {
+          speaking.onended = resolve;
+          speaking.onerror = () => reject(new Error('playback failed'));
+          speaking.play().catch(reject);
+        });
+        bridge.speechStatus({ ok: true });
+      } catch (err) {
+        console.error('[tts] playback blocked: ' + err.message);
+        bridge.speechStatus({ ok: false, error: err.message });
+        // A blocked clip means the rest will be blocked too; do not grind
+        // through the whole queue reporting the same failure.
+        speechQueue = [];
+      }
+    }
+  } finally {
+    speechDraining = false;
+  }
+}
+
+bridge.onSpeak(({ data, turn = 0 }) => {
   if (!data) return;
-  if (speaking) { try { speaking.pause(); } catch {} }
-  speaking = new Audio("data:audio/wav;base64," + data);
-  speaking.play()
-    .then(() => bridge.speechStatus({ ok: true }))
-    .catch((err) => {
-      console.error("[tts] playback blocked: " + err.message);
-      bridge.speechStatus({ ok: false, error: err.message });
-    });
+  if (turn !== speechTurn) {
+    // A new answer: abandon the old one mid-sentence rather than finishing it.
+    speechTurn = turn;
+    speechQueue = [];
+    if (speaking) { try { speaking.pause(); } catch {} }
+  }
+  speechQueue.push({ data, turn });
+  drainSpeech();
+});
+
+/**
+ * The answer as the model writes it.
+ *
+ * Shown immediately rather than held back until the reply is complete: the
+ * first words arrive in about 90ms and the last can be a second or two later,
+ * so waiting would mean an empty overlay for most of the answer.
+ */
+let pendingPartial = null;
+let partialFrame = 0;
+
+bridge.onAgentPartial(({ text, retracted }) => {
+  if (retracted) {
+    // The model decided to use a tool after all, so what it wrote was preamble.
+    pendingPartial = null;
+    setState('thinking', { hint: 'Working…' });
+    return;
+  }
+  if (!text) return;
+
+  // Tokens arrive far faster than the screen refreshes, and showAnswer rebuilds
+  // the block each time, so painting per token would only cause flicker.
+  pendingPartial = text;
+  if (partialFrame) return;
+  partialFrame = requestAnimationFrame(() => {
+    partialFrame = 0;
+    const next = pendingPartial;
+    pendingPartial = null;
+    if (next === null) return;
+    cancelCollapse();
+    setState('answer', { hint: '' });
+    showAnswer(next);
+  });
 });
 
 // --- Card actions ---------------------------------------------------------

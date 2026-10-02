@@ -291,8 +291,17 @@ function speakableSummary(text, { maxChars = 320 } = {}) {
   let out = String(text)
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`([^`]+)`/g, '$1')
+    // A markdown link reads as its text; the URL is noise aloud. Done before
+    // URLs are replaced, or "[docs](https://…)" became "[docs](a link)".
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, 'a link')
     .replace(/<[^>]+>/g, ' ')            // stray markup, e.g. email addresses in angle brackets
+    // Emphasis markers are invisible on the page and gibberish when read out.
+    // Stripping leading punctuation alone left the closing pair behind, so
+    // "**Bold**" was spoken as "Bold asterisk asterisk".
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(^|[\s(])[*_]([^*_\s][^*_]*)[*_](?=[\s).,!?;:]|$)/g, '$1$2')
     .replace(/^[\s>*\-#]+/gm, '')
     .replace(/\s+/g, ' ')
     .trim();

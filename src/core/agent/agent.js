@@ -60,7 +60,7 @@ class Agent {
    * Handles one spoken request.
    * @returns {Promise<{question, answer, found, ms, model, usedRouter}>}
    */
-  async run(question, { onStage = () => {}, onOpening = null, signal } = {}) {
+  async run(question, { onStage = () => {}, onOpening = null, onPartial = null, signal } = {}) {
     const started = Date.now();
     const tools = buildTools(this.ctx);
 
@@ -95,9 +95,52 @@ class Agent {
     }
 
     onStage('thinking');
-    // The model path is the slow one, so it benefits most from speaking first.
-    if (onOpening) onOpening('Let me think about that.');
-    return this.runModelLoop(question, tools, { started, signal, onStage });
+    // Without streaming the model path is silent for a second or two, so it
+    // gets a filler line. With streaming the real first words arrive in about
+    // 90ms, and the filler would only delay them. Keyed on whether this
+    // provider actually streams, not on whether a listener was passed, or a
+    // hosted provider that cannot stream would say nothing at all.
+    const willStream = Boolean(onPartial) && Boolean(this.provider.streams);
+    if (onOpening && !willStream) onOpening('Let me think about that.');
+    return this.runModelLoop(question, tools, { started, signal, onStage, onPartial });
+  }
+
+  /**
+   * Loads the model and caches the prompt prefix it will be asked with.
+   *
+   * Loading the weights is only half the cost. The 24 tool schemas come to
+   * about 1600 prompt tokens, and evaluating them took 33.7 seconds on the
+   * first request against 141ms on the second, because Ollama caches the
+   * prompt prefix between calls. Warming with an empty prompt loads the
+   * weights but caches nothing, so the first real question still paid the
+   * whole 33 seconds.
+   *
+   * Sending one request with the production system prompt and tool list, asking
+   * for a single token, moves that cost to launch where nobody is waiting.
+   */
+  async prewarm({ signal } = {}) {
+    if (!this.provider || typeof this.provider.warm !== 'function') return false;
+    const model = this.config.get('llm.agentModel') || this.config.get('llm.model');
+    if (!model) return false;
+    if (!(await this.provider.available().catch(() => false))) return false;
+
+    await this.provider.warm(model, { signal });
+
+    // Must be the same system prompt and tools the agent loop sends, or the
+    // cached prefix will not match and the work is wasted.
+    const tools = toolSchemas(buildTools(this.ctx));
+    await this.provider.chat({
+      model,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: 'Ready.' }
+      ],
+      tools,
+      temperature: 0,
+      maxTokens: 1,
+      signal
+    });
+    return true;
   }
 
   noBrainMessage() {
@@ -109,7 +152,7 @@ class Agent {
     return `No ${provider} API key is set. Add a free one in Settings, under Agent.`;
   }
 
-  async runModelLoop(question, tools, { started, signal, onStage }) {
+  async runModelLoop(question, tools, { started, signal, onStage, onPartial = null }) {
     const schemas = toolSchemas(tools);
     const byName = new Map(tools.map((t) => [t.name, t]));
     const maxIterations = this.config.get('llm.maxToolIterations', 8);
@@ -126,19 +169,33 @@ class Agent {
     for (let i = 0; i < maxIterations; i++) {
       if (signal && signal.aborted) throw new Error('Cancelled');
 
+      // Streamed only when someone is listening, and only while the model
+      // might still be writing prose: once it has asked for a tool, the next
+      // turn's text is a fresh answer, not a continuation of this one.
+      let streamed = '';
+      const stream = onPartial && this.provider.streams
+        ? (chunk, full) => { streamed = full; onPartial(full, { done: false }); }
+        : undefined;
+
       const res = await this.provider.chat({
         model,
         messages,
         tools: schemas,
         temperature: this.config.get('llm.temperature', 0.2),
-        signal
+        signal,
+        onToken: stream
       });
 
       if (!res.toolCalls || !res.toolCalls.length) {
         const answer = res.text || 'I am not sure how to answer that.';
+        if (onPartial) onPartial(answer, { done: true });
         this.remember(question, answer);
         return { question, answer, found, ms: Date.now() - started, model, usedRouter: false };
       }
+
+      // It wants a tool after all. Anything streamed so far was preamble, not
+      // the answer, so retract it rather than leaving it on screen.
+      if (streamed && onPartial) onPartial('', { done: false, retracted: true });
 
       messages.push({ role: 'assistant', content: res.text || '', toolCalls: res.toolCalls });
 

@@ -23,6 +23,7 @@ const { TranscriptStore } = require('../core/memory/transcripts');
 const { DictationMode } = require('../core/modes/dictation');
 const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
+const { SpeechStream } = require('../core/tts/stream');
 const { getBrowser } = require('../core/browser/cdp');
 const { ConnectionManager } = require('../core/connect/manager');
 const { createLogger } = require('./logger');
@@ -213,6 +214,10 @@ async function initServices() {
   // Warmed now so the first spoken reply does not pay the model load.
   services.tts.prewarm().catch(() => {});
 
+  // And the language model, which is the larger of the two: a cold model costs
+  // about twelve seconds on first use against under two when resident.
+  warmBrain();
+
   services.transcripts.prune()
     .then((r) => r.removed && logger.info(`pruned ${r.removed} expired transcript file(s)`))
     .catch(() => {});
@@ -236,6 +241,10 @@ function reloadServices() {
     bridge: services.bridge,
     browser: services.browser,
     tts: services.tts,
+    // Must be passed here too, not only at startup: without it buildTools
+    // silently drops every connected-account tool, so after any settings
+    // change "check my email" would fall back to a web search about email.
+    connections: services.connections,
     logger,
     requestConfirmation
   });
@@ -248,6 +257,11 @@ function reloadServices() {
     logger
   });
   registerHotkeys();
+
+  // Both were warmed at launch and have just been replaced, so warm the
+  // replacements too, or the first reply after a settings change is slow again.
+  services.tts.prewarm().catch(() => {});
+  warmBrain();
   broadcast('settings-changed', config.all());
 }
 
@@ -930,23 +944,7 @@ function registerIpc() {
           return { ok: false, reason: 'silence' };
         }
 
-        broadcast('agent-result', { question: transcript, answer: '', found: [], pending: true });
-        const result = await services.agent.run(transcript, {
-          signal,
-          onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
-          // Spoken while the tool is still running, not after it.
-          onOpening: (line) => speak(line, { opening: true })
-        });
-
-        broadcast('agent-result', result);
-        speak(result.spoken || result.answer);
-
-        if (services.transcripts) {
-          services.transcripts.append({
-            mode: 'agent', text: result.answer, raw: transcript, ms: result.ms
-          }).catch(() => {});
-        }
-        return result;
+        return runAgent(transcript, { signal, source: 'voice' });
       }
 
       broadcast('session-error', {
@@ -1137,18 +1135,7 @@ function registerIpc() {
     showNotch();
 
     try {
-      const result = await services.agent.run(question, {
-        signal: session.abort.signal,
-        onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
-        onOpening: (line) => speak(line, { opening: true })
-      });
-      broadcast('agent-result', result);
-      speak(result.spoken || result.answer);
-      if (services.transcripts) {
-        services.transcripts.append({ mode: 'agent', text: result.answer, raw: question, ms: result.ms })
-          .catch(() => {});
-      }
-      return result;
+      return runAgent(question, { signal: session.abort.signal, source: 'typed' });
     } catch (err) {
       logger.error(`typed question failed: ${err.message}`);
       broadcast('session-error', { message: 'Something went wrong', detail: err.message });
@@ -1308,7 +1295,99 @@ async function transcribeOnly(samples, sampleRate, signal) {
  * playback stays in the browser audio stack and needs no native dependency.
  * Failure is never fatal: the answer is already on screen.
  */
-async function speak(text, { force = false, opening = false } = {}) {
+/**
+ * Loads the language model before anyone asks it anything.
+ *
+ * A cold model is the single largest delay in the pipeline — about twelve
+ * seconds against under two once resident — and it is paid by whoever asks the
+ * first question. Paying it at launch instead costs nothing the user notices.
+ * Only Ollama can be warmed; hosted providers have nothing to load.
+ */
+function warmBrain({ delayMs = 2500 } = {}) {
+  if (!services.agent) return;
+  const started = Date.now();
+  // Evaluating the tool prompt is tens of seconds of CPU in the Ollama process.
+  // Worth paying, but not while the overlay and tray are still appearing.
+  new Promise((r) => setTimeout(r, delayMs))
+    .then(() => services.agent.prewarm())
+    .then((warmed) => {
+      if (warmed) logger.info(`[llm] model and tool prompt cached in ${Date.now() - started}ms`);
+      else logger.debug('[llm] nothing to warm');
+    })
+    .catch((err) => logger.debug(`[llm] could not warm up: ${err.message}`));
+}
+
+/** Monotonic id for one question-and-answer, so late audio can be discarded. */
+let speechTurn = 0;
+
+/** Whether replies should be read aloud at all. */
+function speechEnabled() {
+  return config.get('tts.enabled', true) && config.get('tts.speakAgentReplies', true);
+}
+
+/**
+ * Runs one request and delivers the reply as it arrives.
+ *
+ * The model streams text at roughly 90ms to the first token but takes a second
+ * or two to finish. Showing and speaking the answer sentence by sentence as it
+ * is written removes that wait entirely: the alternative is a blank overlay
+ * followed by everything at once.
+ */
+async function runAgent(question, { signal, source = 'voice' } = {}) {
+  const turn = ++speechTurn;
+  broadcast('agent-result', { question, answer: '', found: [], pending: true });
+
+  const stream = speechEnabled()
+    ? new SpeechStream({
+        tts: services.tts,
+        speed: config.get('tts.speed', 1),
+        maxChars: config.get('tts.maxSpokenChars', 320),
+        logger,
+        emit: (clip) => broadcast('speak', { ...clip, turn })
+      })
+    : null;
+
+  let partialSeen = false;
+
+  const result = await services.agent.run(question, {
+    signal,
+    onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
+    // Spoken while the tool is still running, not after it.
+    onOpening: (line) => speak(line, { opening: true, turn }),
+    onPartial: (text, { done, retracted } = {}) => {
+      if (retracted) {
+        // The model asked for a tool after all; what it wrote was preamble.
+        broadcast('agent-partial', { turn, text: '', retracted: true });
+        return;
+      }
+      partialSeen = true;
+      broadcast('agent-partial', { turn, text, done: Boolean(done) });
+      if (stream) {
+        if (done) stream.finish(text).catch(() => {});
+        else stream.push(text);
+      }
+    }
+  });
+
+  broadcast('agent-result', result);
+
+  // A streamed reply has already been spoken sentence by sentence; saying it
+  // again would read the whole thing twice.
+  const alreadySpoken = partialSeen && stream && !result.spoken;
+  if (!alreadySpoken) {
+    if (stream) stream.cancel();
+    speak(result.spoken || result.answer, { turn });
+  }
+
+  if (services.transcripts) {
+    services.transcripts.append({
+      mode: 'agent', text: result.answer, raw: question, ms: result.ms, source
+    }).catch(() => {});
+  }
+  return result;
+}
+
+async function speak(text, { force = false, opening = false, turn = speechTurn } = {}) {
   if (!force) {
     if (!config.get('tts.enabled', true)) return logger.debug('[tts] disabled');
     if (!config.get('tts.speakAgentReplies', true)) return logger.debug('[tts] agent replies muted');
@@ -1321,7 +1400,7 @@ async function speak(text, { force = false, opening = false } = {}) {
   try {
     const audio = await services.tts.synthesizeBase64(line, { speed: config.get('tts.speed', 1) });
     logger.info(`[tts] speaking ${line.length} chars (${audio.ms}ms to synthesize)`);
-    broadcast('speak', { data: audio.data, voice: audio.voice });
+    broadcast('speak', { data: audio.data, voice: audio.voice, turn, seq: 0 });
   } catch (err) {
     // Never fatal: the answer is already on screen.
     logger.warn(`[tts] ${err.message}`);
