@@ -66,6 +66,12 @@ function extractBody(payload) {
   return '';
 }
 
+/** "Jonah from VoiceOS <jonah@x.com>" -> "Jonah from VoiceOS". */
+function senderName(from) {
+  const m = /^\s*"?([^"<]+?)"?\s*</.exec(String(from || ''));
+  return (m ? m[1] : String(from || '')).trim() || 'someone';
+}
+
 const header = (message, name) => {
   const h = ((message.payload && message.payload.headers) || [])
     .find((x) => x.name.toLowerCase() === name.toLowerCase());
@@ -112,8 +118,16 @@ const googleTools = (ctx) => [
         api(ctx, 'gmail',
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)));
 
+      // What is spoken is deliberately not what is shown: reading eight
+      // senders and subjects aloud is slow to synthesize and tedious to hear.
+      const newest = messages[0];
+      const spoken = messages.length === 1
+        ? `One message, from ${senderName(header(newest, 'From'))}.`
+        : `You have ${messages.length} messages. The latest is from ${senderName(header(newest, 'From'))}.`;
+
       return {
         ok: true,
+        spoken,
         summary: messages.map((m, i) =>
           `${i + 1}. ${header(m, 'From')} — ${header(m, 'Subject') || '(no subject)'}`).join('\n'),
         found: messages.map((m) => ({
@@ -209,8 +223,13 @@ const googleTools = (ctx) => [
         return new Date(start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       };
 
+      const spoken = events.length === 1
+        ? `One event: ${events[0].summary || 'untitled'} at ${when(events[0])}.`
+        : `${events.length} events. First is ${events[0].summary || 'untitled'} at ${when(events[0])}.`;
+
       return {
         ok: true,
+        spoken,
         summary: events.map((e) => `${when(e)} — ${e.summary || '(no title)'}`).join('\n'),
         found: events.map((e) => ({
           icon: 'google-calendar.png',
@@ -321,8 +340,13 @@ const googleTools = (ctx) => [
       if (!due.length) return { ok: true, summary: 'Nothing due that I can see.' };
       due.sort((a, b) => a.when - b.when);
 
+      const soonest = due[0];
+      const spoken = `${due.length} ${due.length === 1 ? 'thing' : 'things'} due. ` +
+        `Soonest is ${soonest.title}, ${soonest.when.toLocaleDateString(undefined, { weekday: 'long' })}.`;
+
       return {
         ok: true,
+        spoken,
         summary: due.slice(0, limit).map((d) =>
           `${d.title} (${d.course}) — due ${d.when.toLocaleString()}`).join('\n'),
         found: due.slice(0, limit).map((d) => ({

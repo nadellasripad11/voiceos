@@ -934,7 +934,7 @@ function registerIpc() {
         });
 
         broadcast('agent-result', result);
-        speak(result.answer);
+        speak(result.spoken || result.answer);
 
         if (services.transcripts) {
           services.transcripts.append({
@@ -1137,7 +1137,7 @@ function registerIpc() {
         onStage: (stage, detail) => broadcast('session-stage', { stage, detail })
       });
       broadcast('agent-result', result);
-      speak(result.answer);
+      speak(result.spoken || result.answer);
       if (services.transcripts) {
         services.transcripts.append({ mode: 'agent', text: result.answer, raw: question, ms: result.ms })
           .catch(() => {});

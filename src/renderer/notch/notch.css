@@ -201,6 +201,18 @@ html, body {
   overflow-y: auto;
 }
 .answer p + p { margin-top: 10px; }
+
+/* A list reads as a list: one item per line, numbers aligned, so eight emails
+   are scannable instead of being one wall of text. */
+.answer-list {
+  list-style: decimal;
+  margin: 2px 0 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.answer-list li { padding-left: 2px; }
+.answer-list li::marker { color: var(--island-faint); font-size: 13px; }
 .answer:empty { display: none; }
 .answer::-webkit-scrollbar { width: 6px; }
 .answer::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); border-radius: 99px; }

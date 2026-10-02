@@ -183,10 +183,13 @@ class Agent {
 
   finish({ question, result, started, model, usedRouter }) {
     const answer = result.summary || (result.ok ? 'Done.' : 'That did not work.');
+    // A tool may offer a shorter line to read aloud than the one it displays.
+    const spoken = result.spoken || null;
     this.remember(question, answer);
     return {
       question,
       answer,
+      spoken,
       found: result.found || [],
       ms: Date.now() - started,
       model,

@@ -129,13 +129,38 @@ function showAsked(text) {
 }
 
 function showAnswer(text) {
-  // Paragraphs only, as text nodes. Rendering model output as HTML would be an
-  // injection path straight into the overlay.
+  // Everything is inserted as text nodes: rendering model or tool output as
+  // HTML would be an injection path straight into the overlay.
   el.answerText.innerHTML = '';
-  for (const para of String(text || '').split(/\n{2,}/)) {
+  const raw = String(text || '').trim();
+  if (!raw) return;
+
+  // Blank lines separate paragraphs; single newlines are still line breaks.
+  // Treating the whole thing as prose turned any list into one run-on block.
+  for (const block of raw.split(/\n{2,}/)) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+
+    // A run of numbered or bulleted lines is a list, so render it as one.
+    const numbered = lines.length > 1 && lines.every((l) => /^(\d+[.)]|[-*\u2022])\s/.test(l));
+    if (numbered) {
+      const list = document.createElement('ol');
+      list.className = 'answer-list';
+      for (const line of lines) {
+        const li = document.createElement('li');
+        li.textContent = line.replace(/^(\d+[.)]|[-*\u2022])\s*/, '');
+        list.appendChild(li);
+      }
+      el.answerText.appendChild(list);
+      continue;
+    }
+
     const p = document.createElement('p');
-    p.textContent = para.trim();
-    if (p.textContent) el.answerText.appendChild(p);
+    lines.forEach((line, i) => {
+      if (i) p.appendChild(document.createElement('br'));
+      p.appendChild(document.createTextNode(line));
+    });
+    el.answerText.appendChild(p);
   }
 }
 
