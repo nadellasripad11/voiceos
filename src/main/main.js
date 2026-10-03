@@ -124,10 +124,10 @@ function armWatchdog() {
 
 // --- Service wiring -------------------------------------------------------
 
-function buildStt() {
+function buildStt(modelOverride = null) {
   const cfg = config.all();
   return new WhisperEngine({
-    model: cfg.stt.model,
+    model: modelOverride || cfg.stt.model,
     language: cfg.stt.language,
     threads: cfg.stt.threads,
     translate: cfg.stt.translate,
@@ -195,6 +195,9 @@ async function initServices() {
   ensureDirs();
   services.bridge = getBridge({ logger });
   services.stt = buildStt();
+  // Interim transcripts are thrown away a second after they appear, so they
+  // use the smallest model whatever the configured one is.
+  services.sttFast = buildStt('ggml-tiny.en-q5_1.bin');
   services.provider = buildProvider();
   services.transcripts = new TranscriptStore({ config, logger });
   services.tts = buildTts();
@@ -275,6 +278,7 @@ async function initServices() {
 /** Rebuilds the services whose construction depends on settings. */
 function reloadServices() {
   services.stt = buildStt();
+  services.sttFast = buildStt('ggml-tiny.en-q5_1.bin');
   services.provider = buildProvider();
   services.tts = buildTts();
   services.agent = new Agent({
@@ -327,6 +331,16 @@ let pointerOverNotch = false;
 let hoverTimer = null;
 
 /**
+ * Set while the compose box holds focus.
+ *
+ * The hover watch owns the window's focusable flag, and it would otherwise
+ * revoke it the instant the pointer left the island — which is immediately,
+ * because people move their hand to the keyboard to type. This is the compose
+ * box's claim on that flag, and the watch leaves it alone while it is held.
+ */
+let typingInNotch = false;
+
+/**
  * Polls the pointer and toggles click-through as it crosses the island.
  *
  * Electron does not deliver mouse moves to a window that is click-through and
@@ -361,8 +375,12 @@ function startHoverWatch() {
       // Being focusable does not steal focus; only an actual click does. So
       // the user's own field keeps focus right up until they choose to click
       // the island, which is exactly when they want it.
-      win.setIgnoreMouseEvents(!inside, { forward: false });
-      win.setFocusable(inside);
+      // Never while they are typing: taking focusability away mid-keystroke
+      // is what made the compose box look focused and do nothing.
+      if (!typingInNotch) {
+        win.setIgnoreMouseEvents(!inside, { forward: false });
+        win.setFocusable(inside);
+      }
       win.webContents.send('notch-hover', inside);
     } catch {
       // A dropped poll is harmless; the next one corrects it.
@@ -1064,6 +1082,14 @@ function registerIpc() {
         }
         logger.info(`[agent] heard "${transcript}"`);
 
+        // Hand the words back so a mishearing can be corrected. The overlay
+        // sends them on by itself a moment later unless the user intervenes,
+        // so speaking and doing nothing still works exactly as before.
+        if (config.get('ui.liveTranscript', true)) {
+          broadcast('transcript', { text: transcript, confirmMs: config.get('ui.confirmMs', 2200) });
+          return { ok: true, transcript, awaitingConfirmation: true };
+        }
+
         return runAgent(transcript, { signal, source: 'voice' });
       }
 
@@ -1231,6 +1257,7 @@ function registerIpc() {
   ipcMain.on('voiceos:set-focusable', (_e, focusable) => {
     const win = windows.notch;
     if (!win || win.isDestroyed()) return;
+    typingInNotch = Boolean(focusable);
     win.setFocusable(Boolean(focusable));
     if (focusable) {
       win.setIgnoreMouseEvents(false);
@@ -1238,6 +1265,36 @@ function registerIpc() {
     } else {
       win.setIgnoreMouseEvents(true, { forward: true });
       win.blur();
+    }
+  });
+
+  /**
+   * A partial transcript, for showing the words while they are still being
+   * spoken.
+   *
+   * Always the small model regardless of the configured one: this runs while
+   * the user is mid-sentence and is thrown away a second later, so it must be
+   * quick rather than right. The final transcript uses the real model.
+   */
+  ipcMain.handle('voiceos:transcribe-partial', async (_e, { pcm, sampleRate }) => {
+    if (!config.get('ui.liveTranscript', true)) return { text: '' };
+    try {
+      const { writeWav, floatToPcm16, trimSilence } = require('../core/audio/wav');
+      const samples = pcm16ToFloat32(Buffer.from(pcm));
+      const trimmed = trimSilence(samples, { threshold: config.get('stt.vad.threshold'), sampleRate });
+      if (trimmed.length < sampleRate * 0.4) return { text: '' };
+
+      const wavPath = path.join(paths.tmp, `partial-${Date.now()}.wav`);
+      writeWav(wavPath, floatToPcm16(trimmed), { sampleRate });
+      try {
+        const r = await services.sttFast.transcribe(wavPath, { language: 'en' });
+        return { text: r.text || '' };
+      } finally {
+        fs.rmSync(wavPath, { force: true });
+      }
+    } catch {
+      // A dropped partial is harmless; the next one replaces it.
+      return { text: '' };
     }
   });
 

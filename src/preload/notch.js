@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('voiceos', {
   onSessionResult: (fn) => on('session-result', fn),
   onAgentResult: (fn) => on('agent-result', fn),
   onAgentPartial: (fn) => on('agent-partial', fn),
+  onTranscript: (fn) => on('transcript', fn),
+  transcribePartial: (payload) => ipcRenderer.invoke('voiceos:transcribe-partial', payload),
   onSpeak: (fn) => on('speak', fn),
   onAgentConfirm: (fn) => on('agent-confirm', fn),
   onSessionError: (fn) => on('session-error', fn)

@@ -111,6 +111,15 @@ const DEFAULTS = {
     defaultPlayer: 'Spotify'
   },
 
+  ui: {
+    // Show the words as they are spoken, in place of the level meter, and
+    // hand the finished transcript back for correction before it is acted on.
+    liveTranscript: true,
+    // How long the transcript waits in the box before sending itself. Any
+    // keystroke cancels it, so this is a grace period rather than a prompt.
+    confirmMs: 2200
+  },
+
   edit: {
     enabled: true,
     maxChars: 8000               // a selection larger than this is refused

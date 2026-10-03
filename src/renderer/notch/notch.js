@@ -21,6 +21,7 @@ const el = {
   appBadge: document.getElementById('appBadge'),
   compose: document.getElementById('compose'),
   composeInput: document.getElementById('composeInput'),
+  liveText: document.getElementById('liveText'),
   send: document.getElementById('send'),
   replay: document.getElementById('replay'),
   foundWrap: document.getElementById('foundWrap'),
@@ -343,6 +344,7 @@ async function startCapture(mode, config, { handsFree = false } = {}) {
   cancelCollapse();
   setState('listening', { hint: handsFree ? 'Hands-free — tap to finish' : 'Listening…' });
   startTimer();
+  if (config && config.ui && config.ui.liveTranscript !== false) startLivePartials();
 
   try {
     // The pre-warmed stream if it is still live, otherwise open one now.
@@ -450,7 +452,60 @@ async function finishCapture() {
   }
 }
 
+/**
+ * Transcribes the audio captured so far and shows it.
+ *
+ * Whisper does not stream, so this re-transcribes a growing buffer rather than
+ * continuing one. At these lengths that is cheap, and a pass is skipped
+ * entirely while another is in flight so they can never pile up.
+ */
+let partialBusy = false;
+let partialTimer = null;
+
+function startLivePartials() {
+  stopLivePartials();
+  partialTimer = setInterval(async () => {
+    if (partialBusy || capture.stopping || !capture.chunks.length) return;
+    partialBusy = true;
+    try {
+      const merged = mergeChunks(capture.chunks);
+      if (merged.length < capture.sampleRate * 0.5) return;
+      const pcm = floatToPcm16(downsample(merged, capture.sampleRate, TARGET_RATE));
+      const { text } = await bridge.transcribePartial({ pcm: pcm.buffer, sampleRate: TARGET_RATE });
+      if (text && !capture.stopping) showLiveText(text);
+    } catch {
+      // A dropped partial is harmless; the next one replaces it.
+    } finally {
+      partialBusy = false;
+    }
+  }, 1100);
+}
+
+function stopLivePartials() {
+  if (partialTimer) { clearInterval(partialTimer); partialTimer = null; }
+  partialBusy = false;
+}
+
+/** The words so far, shown where the level meter would be. */
+function showLiveText(text) {
+  if (!el.liveText) return;
+  el.liveText.textContent = text;
+  el.liveText.hidden = false;
+  if (el.wave) el.wave.hidden = true;
+  // The hint says "Listening…", which the words themselves now say better,
+  // and it was taking two thirds of the room they need.
+  if (el.hint) el.hint.hidden = true;
+}
+
+function hideLiveText() {
+  if (el.liveText) { el.liveText.hidden = true; el.liveText.textContent = ''; }
+  if (el.wave) el.wave.hidden = false;
+  if (el.hint) el.hint.hidden = false;
+}
+
 function teardownCapture() {
+  stopLivePartials();
+  hideLiveText();
   if (capture.rafHandle) { cancelAnimationFrame(capture.rafHandle); capture.rafHandle = null; }
   if (capture.processor) {
     capture.processor.onaudioprocess = null;
@@ -582,11 +637,13 @@ bridge.onSessionIdle(({ hotkeys, position } = {}) => {
 
   // The footer states the chord that actually bound, which is not always the
   // preferred one.
-  const dictate = (hotkeys && hotkeys.dictation) || 'Ctrl+Shift';
+  const agent = (hotkeys && hotkeys.agent) || 'Ctrl+Shift';
   // The placeholder states the chord that actually bound, which is not always
   // the preferred one.
   if (el.composeInput) {
-    el.composeInput.placeholder = `Type or hold ${prettyKey(dictate)} to speak`;
+    // Agent is the mode that does things; dictation is for typing into
+    // someone else's field, and is not what this box is for.
+    el.composeInput.placeholder = `Type or hold ${prettyKey(agent)} to ask`;
   }
 });
 
@@ -847,6 +904,7 @@ el.composeInput.addEventListener("input", () => {
 
 el.compose.addEventListener("submit", (e) => {
   e.preventDefault();
+  cancelTranscriptCountdown();
   const text = el.composeInput.value.trim();
   if (!text) return;
   el.composeInput.value = "";
@@ -857,6 +915,73 @@ el.compose.addEventListener("submit", (e) => {
   showAsked(text);
   setState("thinking", { hint: "Thinking\u2026" });
   bridge.ask(text);
+});
+
+/**
+ * The finished transcript, waiting to be corrected.
+ *
+ * It sends itself after a moment so that speaking and doing nothing behaves
+ * exactly as it always did. Any keystroke cancels that, which is the whole
+ * point: a mishearing becomes something you fix rather than something you
+ * have to say again.
+ */
+let confirmTimer = null;
+let confirmLeft = 0;
+
+function cancelTranscriptCountdown(reason) {
+  if (confirmTimer) { clearInterval(confirmTimer); confirmTimer = null; }
+  confirmLeft = 0;
+  if (el.send) el.send.classList.remove('is-counting');
+  if (reason === 'edited') setState('answer', { hint: '' });
+}
+
+bridge.onTranscript(({ text, confirmMs = 2200 }) => {
+  if (!text) return;
+  cancelCollapse();
+  stopTimer();
+  setState('answer', { hint: '' });
+  clearBody();
+  hideLiveText();
+
+  el.composeInput.value = text;
+  el.send.classList.add('is-ready', 'is-counting');
+  el.meta.textContent = 'Sending… press any key to edit';
+
+  // Focus so a correction can start immediately, without a click.
+  bridge.setFocusable(true);
+  try { el.composeInput.focus(); el.composeInput.select(); } catch {}
+
+  confirmLeft = confirmMs;
+  if (confirmTimer) clearInterval(confirmTimer);
+  confirmTimer = setInterval(() => {
+    confirmLeft -= 100;
+    if (confirmLeft > 0) return;
+    cancelTranscriptCountdown();
+    const finalText = el.composeInput.value.trim();
+    el.composeInput.value = '';
+    el.send.classList.remove('is-ready');
+    el.meta.textContent = '';
+    if (!finalText) return;
+    clearBody();
+    showAsked(finalText);
+    setState('thinking', { hint: 'Thinking\u2026' });
+    bridge.ask(finalText);
+  }, 100);
+});
+
+// Any real keystroke means they want to correct it, so the clock stops.
+el.composeInput.addEventListener('keydown', (e) => {
+  if (!confirmTimer) return;
+  if (e.key === 'Enter') return;            // submit handles this
+  if (e.key === 'Escape') {
+    cancelTranscriptCountdown();
+    el.composeInput.value = '';
+    el.meta.textContent = '';
+    collapseToIdle();
+    return;
+  }
+  cancelTranscriptCountdown('edited');
+  el.meta.textContent = 'Press Enter to send';
 });
 
 // --- Replay ---------------------------------------------------------------
@@ -904,7 +1029,7 @@ setTimeout(reportHitRect, 60);
 
 el.card.addEventListener('click', (e) => {
   if (e.target.closest('button')) return;
-  if (el.stage.dataset.state === 'idle') bridge.startMode('dictation');
+  if (el.stage.dataset.state === 'idle') bridge.startMode('agent');
 });
 
 // Square against a bezel, rounded when floating free.

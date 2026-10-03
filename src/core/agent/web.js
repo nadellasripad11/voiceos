@@ -76,8 +76,17 @@ const round = (n) => (n == null ? null : Math.round(n));
  * @param {'F'|'C'} [opts.units]
  */
 async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs = 8000 } = {}) {
-  const where = place ? await geocode(place) : await locateByIp();
-  if (!where) return { ok: false, summary: `I could not find a place called "${place}".` };
+  // A named place that no gazetteer knows — a local park, a school, a
+  // mishearing — is not a reason to refuse. The weather where the user is
+  // standing is almost certainly what they wanted, so it falls back and says
+  // which place it answered for.
+  let where = place ? await geocode(place).catch(() => null) : null;
+  let fellBackToHere = false;
+  if (!where) {
+    where = await locateByIp();
+    fellBackToHere = Boolean(place);
+  }
+  if (!where) return { ok: false, summary: 'I could not work out where you are.' };
 
   const unit = units === 'C' ? 'celsius' : 'fahrenheit';
   const symbol = units === 'C' ? '°C' : '°F';
@@ -110,7 +119,8 @@ async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs =
     return {
       ok: true,
       place: place_,
-      spoken: `It's ${temp} and ${sky} in ${where.name}${feelsSpoken}. High of ${high}, low of ${low}.`,
+      spoken: (fellBackToHere ? `I could not find ${place}, so here is ${where.name}. ` : '') +
+        `It's ${temp} and ${sky} in ${where.name}${feelsSpoken}. High of ${high}, low of ${low}.`,
       summary: `${place_}: ${temp}${symbol}, ${sky}${feelsShown}.\n` +
         `Today: high ${high}${symbol}, low ${low}${symbol}` +
         (rain != null ? `, ${rain}% chance of rain.` : '.'),
@@ -132,7 +142,8 @@ async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs =
   return {
     ok: true,
     place: place_,
-    spoken: `${label} in ${where.name}: ${sky}, high of ${high}, low of ${low}` +
+    spoken: (fellBackToHere ? `I could not find ${place}, so here is ${where.name}. ` : '') +
+      `${label} in ${where.name}: ${sky}, high of ${high}, low of ${low}` +
       (rain != null && rain >= 30 ? `, ${rain} percent chance of rain.` : '.'),
     summary: `${place_} — ${label.toLowerCase()}: ${sky}, high ${high}${symbol}, low ${low}${symbol}` +
       (rain != null ? `, ${rain}% chance of rain.` : '.'),

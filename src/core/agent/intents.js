@@ -96,6 +96,57 @@ function stripChatter(text) {
   return out;
 }
 
+/**
+ * What to search for, from a sentence asking to play something.
+ *
+ * People name the thing last and pad everything before it: "play some music on
+ * Spotify bro play like Drake" is a request for Drake. So the text after the
+ * final "play" wins, and the filler around it is stripped. Returns null when
+ * what is left is a generic word like "music", which is a request to resume,
+ * not a search for an artist of that name.
+ */
+function musicQuery(text) {
+  let out = String(text || '').trim();
+
+  // Anything after the final play-verb is the subject: people name the thing
+  // last and pad everything before it.
+  const verbs = /\b(?:play|put on|throw on|listen to)\b/gi;
+  let last = null;
+  let m;
+  while ((m = verbs.exec(out)) !== null) last = m.index + m[0].length;
+  if (last !== null) out = out.slice(last);
+
+  out = out
+    // "... on Spotify" names the player, not the music.
+    .replace(/\b(?:on|in|with|from)\s+(?:spotify|youtube|apple music|itunes|vlc)\b.*$/i, '')
+    .replace(/\b(?:bro|dude|man|please|pls|bruh)\b/gi, ' ')
+    .trim();
+
+  // Leading and trailing filler, stripped repeatedly because it stacks.
+  for (let i = 0; i < 6; i++) {
+    const before = out;
+    out = out
+      .replace(/^(?:like|some|the|a|an|me|my|us|by|any)\b/i, '')
+      .replace(/[\s,]*\b(?:right|ok|okay|yeah|please|thanks|i like|i want|for me|or something)\b[\s.,!?]*$/i, '')
+      .replace(/^[\s,]+/, '')
+      .replace(/[\s,.!?]+$/, '')
+      .trim();
+    if (out === before) break;
+  }
+
+  out = out.replace(/\s+/g, ' ').trim();
+  if (!out || out.length < 2 || out.length > 60) return null;
+
+  // A generic music word anywhere means a vibe rather than a name — "some
+  // music", "white film music I like", "something". Those belong to the
+  // player, which resumes or starts it, not to a search that would look for
+  // an artist of that name.
+  if (/\b(?:music|songs?|tunes?|tracks?|playlists?|something|anything|stuff|whatever)\b/i.test(out)) return null;
+  if (/^(?:it|that|this|one)$/i.test(out)) return null;
+
+  return out;
+}
+
 /** Each entry: { re, tool, args?, guard? }. */
 const INTENTS = [
   // --- Point and ask ------------------------------------------------------
@@ -121,7 +172,7 @@ const INTENTS = [
     // Skip when another noun already carries the question, so "what song is
     // this" still reaches the media tool.
     guard: (_m, text) =>
-      !/\b(playing|song|sings|singing|artist|band|album|track|music|open|reminder|file|time|weather|due|volume|windows?)\b/i.test(text)
+      !/\b(playing|song|sings|singing|artist|band|album|track|music|open|reminder|file|time|weather|due|homework|quiz|quizzes|test|tests|exam|exams|assignment|assignments|volume|windows?|email|inbox|calendar)\b/i.test(text)
   },
 
   // --- Mail, calendar and school -------------------------------------------
@@ -146,7 +197,7 @@ const INTENTS = [
     args: (_m, text) => ({ days: /tomorrow/i.test(text) ? 2 : 1 })
   },
   {
-    re: /\b(?:due|homework|assignments?|coursework)\b/i,
+    re: /\b(?:due|homework|quiz|quizzes|test|tests|exam|exams|assignment|assignments|assignments?|coursework)\b/i,
     tool: 'list_coursework'
   },
   {
@@ -204,6 +255,18 @@ const INTENTS = [
     re: /^(?:mute|unmute|silence)\b/i,
     tool: 'set_volume',
     args: () => ({ direction: 'mute' })
+  },
+
+  {
+    // A named artist, song or album: "play Drake", "play some Drake on
+    // Spotify", "put on Bohemian Rhapsody". Must precede the loose rule below,
+    // which would otherwise hear only the word "play".
+    re: /\b(?:play|put on|throw on)\b(?:\s+(?:some|the|a|me))?\s+(?:music\s+)?(?:by\s+)?(.+?)(?:\s+(?:on|in|with|from)\s+(?:spotify|youtube|apple music|itunes))?[\s.!?]*$/i,
+    tool: 'play_search',
+    // Both of these read the whole sentence rather than the capture: people
+    // name the thing last and pad everything before it.
+    guard: (_m, text) => Boolean(musicQuery(text)),
+    args: (_m, text) => ({ query: musicQuery(text) })
   },
 
   {
@@ -419,4 +482,4 @@ function matchIntent(text, tools, config = null) {
   return null;
 }
 
-module.exports = { matchIntent, INTENTS, SITES, siteUrl, stripChatter };
+module.exports = { matchIntent, INTENTS, SITES, siteUrl, stripChatter, musicQuery };

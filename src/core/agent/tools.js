@@ -215,6 +215,48 @@ async function readCursorContext(ctx, { radiusX = 620, radiusY = 380 } = {}) {
   return out;
 }
 
+const musicSearchTools = (ctx) => [
+  {
+    name: 'play_search',
+    appId: 'spotify',
+    description: 'Play a named artist, song or album, e.g. "play Drake". Not for a bare "play music".',
+    parameters: obj({ query: str('The artist, song or album to play') }, ['query']),
+    run: async ({ query }) => {
+      const term = String(query || '').trim();
+      if (!term) return { ok: false, summary: 'Nothing to search for.' };
+
+      // The desktop app answers its own URI scheme, which opens it on the
+      // search without needing an account token or the Web API.
+      try {
+        await ctx.bridge.openUrl(`spotify:search:${encodeURIComponent(term)}`);
+      } catch {
+        await ctx.bridge.openUrl(`https://open.spotify.com/search/${encodeURIComponent(term)}`).catch(() => {});
+      }
+
+      // Give it a moment to come up, then start whatever is top of the list.
+      await new Promise((res) => setTimeout(res, 2500));
+      await ctx.bridge.mediaKey('media_play_pause').catch(() => {});
+      await new Promise((res) => setTimeout(res, 900));
+
+      const status = await ctx.bridge.mediaStatus().catch(() => ({}));
+      const c = status && status.current;
+      if (c && c.title) {
+        return {
+          ok: true,
+          summary: `Playing ${c.title}${c.artist ? ` by ${c.artist}` : ''}.`,
+          spoken: `Playing ${c.title}.`,
+          found: [{ icon: 'spotify.webp', title: c.title, subtitle: [c.artist, c.app].filter(Boolean).join(' · ') }]
+        };
+      }
+      return {
+        ok: true,
+        summary: `I opened Spotify on "${term}". Press play on the one you want.`,
+        spoken: `I found ${term} on Spotify.`
+      };
+    }
+  }
+];
+
 const weatherTools = (ctx) => [
   {
     name: 'weather',
@@ -341,7 +383,40 @@ const mediaTools = (ctx) => [
       }
 
       const r = await ctx.bridge.mediaControl(action, { app });
-      if (!r.ok) return { ok: false, summary: r.error || 'Nothing is playing.' };
+
+      // Spotify only registers a media session once it has played something,
+      // so a freshly started one cannot be addressed through the session API
+      // at all — which is exactly what "No media session found for 'Spotify'"
+      // was. The media key is the system-wide fallback the bridge already had
+      // and nothing used.
+      if (!r.ok) {
+        const key = {
+          play: 'media_play_pause', toggle: 'media_play_pause', pause: 'media_play_pause',
+          next: 'media_next', previous: 'media_prev'
+        }[action];
+        if (!key) return { ok: false, summary: r.error || 'Nothing is playing.' };
+
+        ctx.logger.info?.(`[media] no session; falling back to the ${key} key`);
+        await ctx.bridge.mediaKey(key).catch(() => {});
+        await new Promise((res) => setTimeout(res, 900));
+
+        const after = await ctx.bridge.mediaStatus().catch(() => ({}));
+        const c = after && after.current;
+        if (c && c.title) {
+          return {
+            ok: true,
+            summary: `${c.status === 'Playing' ? 'Playing' : c.status}: ${c.title}${c.artist ? ` by ${c.artist}` : ''}.`,
+            spoken: `Playing ${c.title}.`,
+            found: [{ icon: 'spotify.webp', title: c.title, subtitle: [c.artist, c.app].filter(Boolean).join(' · ') }]
+          };
+        }
+        return {
+          ok: true,
+          summary: 'I pressed play. If nothing started, play something in the player once — it only becomes controllable after that.',
+          spoken: 'I pressed play.'
+        };
+      }
+
       const s = r.state || {};
       const verb = { play: 'Playing', pause: 'Paused', toggle: 'Toggled', next: 'Skipped to', previous: 'Went back to' }[action];
       return {
@@ -677,6 +752,7 @@ const OPENINGS = {
   // Genuinely immediate, and the result speaks for itself: a window opening or
   // the music pausing is its own confirmation.
   control_playback: 'One moment.',
+  play_search: 'Putting that on.',
   set_volume: null,
   create_reminder: null,
   take_note: null,
@@ -702,6 +778,7 @@ function buildTools(ctx) {
     ...systemTools(ctx),
     ...smallTalkTools(),
     ...weatherTools(ctx),
+    ...musicSearchTools(ctx),
     // Only offered when a connection manager is present to resolve tokens.
     ...(ctx.connections ? googleTools(ctx) : []),
     ...mediaTools(ctx),
