@@ -318,6 +318,28 @@ const mediaTools = (ctx) => [
     }, ['action']),
     autoConfirm: true,
     run: async ({ action, app }) => {
+      // A media key goes nowhere when nothing is playing, so asking for music
+      // with the player closed pressed play at an empty desk. Start it first.
+      if (action === 'play' || action === 'toggle') {
+        const status = await ctx.bridge.mediaStatus().catch(() => ({}));
+        if (!status || !status.current) {
+          const player = app || ctx.config.get('media.defaultPlayer', 'Spotify');
+          ctx.logger.info?.(`[media] no player running; starting ${player}`);
+          try {
+            await ctx.bridge.openApp(player);
+            // It has to register a media session before it can be told to
+            // play; polling beats one long sleep, which would be dead air.
+            for (let waited = 0; waited < 8000; waited += 400) {
+              await new Promise((r) => setTimeout(r, 400));
+              const now = await ctx.bridge.mediaStatus().catch(() => ({}));
+              if (now && now.current) break;
+            }
+          } catch (err) {
+            return { ok: false, summary: `I could not start ${player}: ${err.message}` };
+          }
+        }
+      }
+
       const r = await ctx.bridge.mediaControl(action, { app });
       if (!r.ok) return { ok: false, summary: r.error || 'Nothing is playing.' };
       const s = r.state || {};
@@ -654,7 +676,7 @@ const OPENINGS = {
 
   // Genuinely immediate, and the result speaks for itself: a window opening or
   // the music pausing is its own confirmation.
-  control_playback: null,
+  control_playback: 'One moment.',
   set_volume: null,
   create_reminder: null,
   take_note: null,

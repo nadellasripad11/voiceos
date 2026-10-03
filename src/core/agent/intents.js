@@ -60,6 +60,42 @@ function siteUrl(name, config) {
   return merged[key] || null;
 }
 
+/**
+ * Removes the conversational wrapping around a request.
+ *
+ * People do not speak in commands. They open with a greeting, say the
+ * assistant's name (which transcription mangles — "Darris" for "Jarvis"),
+ * hedge with "can you", pad with "just" and "so", and trail off with "right?".
+ * None of it changes what they asked for.
+ *
+ * Applied repeatedly because these stack: "oh hey Jarvis, so can you just...".
+ */
+function stripChatter(text) {
+  let out = String(text || '').trim();
+  const passes = [
+    // Greetings and hesitation at the front.
+    /^(?:oh|ok|okay|um|uh|erm|so|well|alright|right|yeah|yo|hey|hi|hello|excuse me|bro|dude|man)\b[\s,]*/i,
+    // The assistant's name, however it came out of transcription.
+    /^(?:jarvis|darris|jarvis[,.]|voice ?os|assistant|computer|siri|alexa)\b[\s,]*/i,
+    // Politeness and hedging.
+    /^(?:please\s+)?(?:can|could|would|will|wo)\s+(?:you|u)\s+(?:please\s+)?/i,
+    /^(?:i\s+(?:want|need|would like)\s+(?:you\s+)?to|i'?d like you to|go ahead and|try to|help me|let'?s)\s+/i,
+    /^(?:please|just|maybe|perhaps|kindly)\s+/i
+  ];
+  for (let round = 0; round < 6; round++) {
+    const before = out;
+    for (const re of passes) out = out.replace(re, '').trim();
+    if (out === before) break;
+  }
+  // Trailing filler: "right?", "ok?", "that's good", "thanks".
+  out = out
+    .replace(/[\s,]*\b(?:right|ok|okay|yeah|yes|please|thanks|thank you|cheers|if you can|will you|would you|for me)\b[\s.!?]*$/i, '')
+    .replace(/[\s,]*\bthat'?s (?:good|fine|great|it)\b[\s.!?]*$/i, '')
+    .replace(/[\s,]*\boh my god\b[\s.!?]*$/i, '')
+    .trim();
+  return out;
+}
+
 /** Each entry: { re, tool, args?, guard? }. */
 const INTENTS = [
   // --- Point and ask ------------------------------------------------------
@@ -85,7 +121,7 @@ const INTENTS = [
     // Skip when another noun already carries the question, so "what song is
     // this" still reaches the media tool.
     guard: (_m, text) =>
-      !/\b(playing|song|track|music|open|reminder|file|time|weather|due|volume|windows?)\b/i.test(text)
+      !/\b(playing|song|sings|singing|artist|band|album|track|music|open|reminder|file|time|weather|due|volume|windows?)\b/i.test(text)
   },
 
   // --- Mail, calendar and school -------------------------------------------
@@ -126,7 +162,8 @@ const INTENTS = [
     // The apostrophe is optional throughout: transcription returns "whats
     // playing" as often as "what's playing", and requiring one meant the
     // command simply did nothing.
-    re: /^(?:what(?:'?s| is)?\s+(?:this\s+)?(?:song|track|playing|music)|who sings this|what am i listening to)/i,
+    // "tell me what song this is" asks exactly what "what song is this" asks.
+    re: /^(?:(?:tell me |do you know )?what(?:'?s| is)?\s+(?:this\s+)?(?:song|track|playing|music)|(?:tell me )?who sings this|what am i listening to|what song is this)/i,
     tool: 'now_playing'
   },
   {
@@ -135,9 +172,11 @@ const INTENTS = [
     args: () => ({ action: 'pause' })
   },
   {
-    re: /^(?:play|resume|unpause)\s*(?:the\s*)?(?:music|song|playback|spotify|it)?\s*$/i,
+    // "play some music", "put something on", "play music on spotify". The
+    // player name is captured so it can be started if it is not running.
+    re: /^(?:please\s+)?(?:play|put on|start|resume)\b(?:\s+(?:some|the|my|a))?(?:\s+(?:music|song|songs|tunes|playlist|something|anything|track))?(?:\s+(?:on|in|with|from)\s+(\w+))?[\s.!?]*$/i,
     tool: 'control_playback',
-    args: () => ({ action: 'play' })
+    args: (m) => ({ action: 'play', app: m[1] || null })
   },
   {
     re: /\b(?:next|skip)\b\s*(?:song|track|this)?\s*$/i,
@@ -165,6 +204,24 @@ const INTENTS = [
     re: /^(?:mute|unmute|silence)\b/i,
     tool: 'set_volume',
     args: () => ({ direction: 'mute' })
+  },
+
+  {
+    // A loose music request: "open Spotify from my apps and play some music",
+    // "put something on". Matched anywhere in the sentence, because this is
+    // the single most common thing asked in a full sentence rather than a
+    // command. Guarded against "what is playing", which is a question.
+    re: /\b(?:play|put on|throw on)\b/i,
+    tool: 'control_playback',
+    guard: (_m, text) =>
+      /\b(?:music|song|songs|tunes|playlist|something|anything|spotify|track|album)\b/i.test(text) &&
+      !/\b(?:what|which|who|whats|what'?s)\b/i.test(text) &&
+      !/\bplaying\b/i.test(text),
+    args: (_m, text) => ({
+      action: 'play',
+      app: (/\b(?:on|in|with|from|using)\s+(spotify|youtube|apple music|itunes|vlc)\b/i.exec(text) || [])[1] ||
+           (/\b(spotify|itunes|vlc)\b/i.exec(text) || [])[1] || null
+    })
   },
 
   // --- Apps and pages -----------------------------------------------------
@@ -335,15 +392,31 @@ function matchIntent(text, tools, config = null) {
   if (!clean) return null;
   const byName = new Map(tools.map((t) => [t.name, t]));
 
-  for (const intent of INTENTS) {
-    const m = intent.re.exec(clean);
-    if (!m) continue;
-    if (intent.guard && !intent.guard(m, clean, config)) continue;
-    const tool = byName.get(intent.tool);
-    if (!tool) continue; // the owning app is switched off
-    return { tool, args: intent.args ? intent.args(m, clean, config) : {} };
+  const tryAll = (text) => {
+    for (const intent of INTENTS) {
+      const m = intent.re.exec(text);
+      if (!m) continue;
+      if (intent.guard && !intent.guard(m, text, config)) continue;
+      const tool = byName.get(intent.tool);
+      if (!tool) continue; // the owning app is switched off
+      return { tool, args: intent.args ? intent.args(m, text, config) : {} };
+    }
+    return null;
+  };
+
+  const direct = tryAll(clean);
+  if (direct) return direct;
+
+  // Nothing matched as spoken. Strip the greeting, the name and the politeness
+  // and try once more. Second pass rather than first, so a sentence that
+  // already routed cannot start routing differently — and so that a bare
+  // "hey", which strips to nothing, stays a greeting.
+  const stripped = stripChatter(clean);
+  if (stripped && stripped !== clean) {
+    const loose = tryAll(stripped);
+    if (loose) return loose;
   }
   return null;
 }
 
-module.exports = { INTENTS, matchIntent , SITES, siteUrl };
+module.exports = { matchIntent, INTENTS, SITES, siteUrl, stripChatter };

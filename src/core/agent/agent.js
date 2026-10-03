@@ -184,6 +184,10 @@ class Agent {
         messages,
         tools: schemas,
         temperature: this.config.get('llm.temperature', 0.2),
+        // Capped because the reply is read aloud, and because generation time
+        // scales with it: an unbounded 1.5B model will happily produce three
+        // paragraphs nobody wants to listen to.
+        maxTokens: this.config.get('llm.maxAnswerTokens', 200),
         signal,
         onToken: stream
       });

@@ -96,6 +96,11 @@ const DEFAULTS = {
   // instead of typed over. Anything that does not read as an instruction stays
   // ordinary dictation, because guessing wrong that way costs a retry while
   // guessing wrong the other way overwrites what the user selected.
+  // Which player to start when music is asked for and nothing is running.
+  media: {
+    defaultPlayer: 'Spotify'
+  },
+
   edit: {
     enabled: true,
     maxChars: 8000               // a selection larger than this is refused
