@@ -23,6 +23,7 @@ const { paths } = require('../paths');
 const { answerFromWeb, getWeather } = require('./web');
 const { pictureFor, imageSubject } = require('./images');
 const { playOnWeb } = require('../music/spotify-web');
+const { canvasTools } = require('./tools-canvas');
 const { googleTools } = require('./tools-google');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -817,6 +818,8 @@ const OPENINGS = {
   answer_from_web: 'Looking that up.',
   show_image: 'Finding a picture.',
   list_grades: 'Checking your grades.',
+  canvas_grades: 'Checking Canvas.',
+  canvas_assignments: 'Checking Canvas.',
   personal_data: null,
   weather: 'Checking the forecast.',
   fetch_page: 'Reading that page.',
@@ -866,6 +869,7 @@ function buildTools(ctx) {
     ...musicSearchTools(ctx),
     // Only offered when a connection manager is present to resolve tokens.
     ...(ctx.connections ? googleTools(ctx) : []),
+    ...(ctx.connections ? canvasTools(ctx) : []),
     ...mediaTools(ctx),
     ...webTools(ctx),
     ...fileTools(ctx),

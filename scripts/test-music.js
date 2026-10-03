@@ -86,13 +86,21 @@ const route = (t) => {
 
   console.log('\nQuizzes and tests are coursework, not a web search:');
   for (const text of [
-    'Could it go to in Canvas and find what quizzes and tests I have this week?',
     'what tests do i have',
     'any quizzes coming up',
     'what exams do I have this week'
   ]) {
     const r = route(text);
     check(`"${text.slice(0, 44)}" -> list_coursework`, r && r.tool === 'list_coursework', JSON.stringify(r));
+  }
+
+  // Naming a system means that system. This sentence used to be answered from
+  // Google Classroom because it mentions quizzes; it mentions Canvas too, and
+  // Canvas is what was asked for.
+  {
+    const text = 'Could it go to in Canvas and find what quizzes and tests I have this week?';
+    const r = route(text);
+    check('naming Canvas wins over the word "quizzes"', r && r.tool === 'canvas_assignments', JSON.stringify(r));
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);

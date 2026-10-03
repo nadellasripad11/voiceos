@@ -444,7 +444,7 @@ const googleTools = (ctx) => [
 
         const pct = Math.round((got / possible) * 1000) / 10;
         lines.push(`${course.name}: ${pct}% (${got} of ${possible} across ${graded} assignment${graded === 1 ? '' : 's'})`);
-        cards.push({ icon: 'canvas.webp', title: `${course.name} — ${pct}%`, subtitle: `${got}/${possible} over ${graded} graded` });
+        cards.push({ glyph: '\u{1F393}', title: `${course.name} — ${pct}%`, subtitle: `${got}/${possible} over ${graded} graded` });
 
         // The ones that lost marks are the interesting ones.
         for (const it of perItem.filter((x) => x.grade < x.max).slice(0, limit)) {
@@ -463,7 +463,8 @@ const googleTools = (ctx) => [
       const overall = Math.round((totalGot / totalPossible) * 1000) / 10;
       return {
         ok: true,
-        summary: lines.join('\n'),
+        // Named, because the user may well have meant a different system.
+        summary: 'Google Classroom\n' + lines.join('\n'),
         spoken: active.length === 1
           ? `You're on ${overall} percent.`
           : `Overall ${overall} percent across ${active.length} classes.`,
@@ -573,10 +574,13 @@ const googleTools = (ctx) => [
       return {
         ok: true,
         spoken,
-        summary: outstanding.slice(0, limit).map((o) =>
+        // Named, because the user may well have meant Canvas or another
+        // system, and an unlabelled list of someone else's assignments is how
+        // a wrong answer comes to look like a right one.
+        summary: 'Google Classroom\n' + outstanding.slice(0, limit).map((o) =>
           `${o.title} (${o.course}) — ${describe(o)}`).join('\n'),
         found: outstanding.slice(0, limit).map((o) => ({
-          icon: 'canvas.webp',
+          glyph: '\u{1F393}',
           title: `${o.title} — ${o.course}`,
           subtitle: describe(o),
           url: o.link

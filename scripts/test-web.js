@@ -94,7 +94,10 @@ const route = (text) => {
   // which is what happened: 64 seconds to invent "[1] Overall grade average
   // [2] No grades assigned". That is worse than no answer at all.
   const personal = [
-    ['Hey, um, can you go to Google and check my grades on Canvas?', 'list_grades'],
+    // Names Canvas, so it must reach Canvas. This previously asserted
+    // list_grades, which is Google Classroom — a different system, a
+    // different course, a different number, shown under a Canvas logo.
+    ['Hey, um, can you go to Google and check my grades on Canvas?', 'canvas_grades'],
     ['what are my grades', 'list_grades'],
     ["what's my gpa", 'list_grades'],
     ['check my marks', 'list_grades'],

@@ -175,6 +175,22 @@ const INTENTS = [
       !/\b(playing|song|sings|singing|artist|band|album|track|music|open|reminder|file|time|weather|due|homework|quiz|quizzes|test|tests|exam|exams|assignment|assignments|volume|windows?|email|inbox|calendar)\b/i.test(text)
   },
 
+  // --- Canvas --------------------------------------------------------------
+  // Naming a system means that system. Answering "my grades on Canvas" out of
+  // Google Classroom produced a different course's marks under a Canvas logo,
+  // which is worse than no answer. When Canvas is not connected the guard
+  // fails and the next rule explains that, rather than quietly substituting.
+  {
+    re: /\bcanvas\b[^?]{0,40}\b(grades?|marks?|scores?|gpa)\b|\b(grades?|marks?|scores?|gpa)\b[^?]{0,40}\bcanvas\b/i,
+    tool: 'canvas_grades',
+    args: () => ({})
+  },
+  {
+    re: /\bcanvas\b[^?]{0,40}\b(due|assignments?|homework|quiz|quizzes|tests?|exams?)\b|\b(due|assignments?|homework|quiz|quizzes|tests?|exams?)\b[^?]{0,40}\bcanvas\b/i,
+    tool: 'canvas_assignments',
+    args: () => ({})
+  },
+
   // --- Mail, calendar and school -------------------------------------------
   {
     re: /\b(?:check|read|any|new|got|show|what'?s? in)\b.*\b(?:e?mails?|inbox)\b/i,
