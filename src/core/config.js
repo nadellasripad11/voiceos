@@ -111,6 +111,27 @@ const DEFAULTS = {
     defaultPlayer: 'Spotify'
   },
 
+  // Say "Hey Jarvis" and it answers, without touching the keyboard.
+  //
+  // Detection is three small ONNX models (about 3.6MB) that run on a rolling
+  // window of audio at a few percent of one core. The audio becomes numbers
+  // immediately and the numbers are discarded as the window slides: nothing is
+  // transcribed, kept or sent anywhere unless the wake word is actually heard.
+  wake: {
+    enabled: true,
+    // The only phrase the pretrained model knows. It has to be said at a
+    // normal pace: said quickly it scores 0.12 against a threshold of 0.5.
+    phrase: 'hey_jarvis_v0.1',
+    // Measured: the wake phrase scores 0.91 to 0.99, and the nearest thing
+    // that is not it ("Hey Travis") scores 0.13. Lowering this to catch fast
+    // speech would start catching that instead.
+    threshold: 0.5,
+    // One spoken phrase covers several windows, so without this it would fire
+    // repeatedly as the window slides across it.
+    refractoryMs: 2500,
+    greeting: 'Hey sir, how can I help you?'
+  },
+
   ui: {
     // Show the words as they are spoken, in place of the level meter, and
     // hand the finished transcript back for correction before it is acted on.

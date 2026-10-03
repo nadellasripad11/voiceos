@@ -28,6 +28,7 @@ const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { SpeechStream } = require('../core/tts/stream');
 const { KokoroTts } = require('../core/tts/kokoro');
+const { WakeDetector } = require('../core/wake/detector');
 const { getBrowser } = require('../core/browser/cdp');
 const { ConnectionManager } = require('../core/connect/manager');
 const { createLogger } = require('./logger');
@@ -261,7 +262,7 @@ async function initServices() {
   // from 1.7s to 18.8s and the PowerShell bridge missed its 30s startup
   // deadline outright, which would have left dictation unable to type
   // anything. Everything the user can actually touch comes first.
-  Promise.all([bridgeReady, ttsReady]).then(() => warmBrain());
+  Promise.all([bridgeReady, ttsReady]).then(() => { startWakeWord(); warmBrain(); });
 
   services.transcripts.prune()
     .then((r) => r.removed && logger.info(`pruned ${r.removed} expired transcript file(s)`))
@@ -902,7 +903,7 @@ async function activeAppBadge() {
   }
 }
 
-function startSession(mode, { handsFree = false } = {}) {
+function startSession(mode, { handsFree = false, wake = false } = {}) {
   if (session.phase !== PHASE.IDLE) return;
   const status = services.stt.status();
   if (!status.ready) {
@@ -926,7 +927,7 @@ function startSession(mode, { handsFree = false } = {}) {
   pauseWarm();
   armWatchdog();
   showNotch();
-  broadcast('session-start', { mode, handsFree, config: config.all(), position: config.get('ui.notchPosition', 'top') });
+  broadcast('session-start', { mode, handsFree, wake, config: config.all(), position: config.get('ui.notchPosition', 'top') });
   // Read the selection now, while it is still the user's: showing the overlay
   // or anything they do next can clear it. Edit Mode needs it, and it is only
   // read for the chord Edit shares, not for Agent Mode.
@@ -1298,6 +1299,30 @@ function registerIpc() {
     }
   });
 
+  /**
+   * Frames from the always-open microphone, for the wake word.
+   *
+   * Dropped without a thought while a session is running: the user is already
+   * talking to it, and hearing its own name in their request would restart the
+   * conversation under them.
+   */
+  let wakeFramesSeen = 0;
+  ipcMain.on('voiceos:wake-audio', (_e, { pcm }) => {
+    const detector = services.wake;
+    if (!detector || session.phase !== PHASE.IDLE) return;
+    // Said once, so a silent failure in the renderer's audio graph is
+    // distinguishable from simply never hearing the wake word.
+    if (++wakeFramesSeen === 25) logger.info('[wake] receiving microphone audio');
+    try {
+      const samples = pcm16ToFloat32(Buffer.from(pcm));
+      detector.push(samples)
+        .then((r) => { if (r.hit) onWakeWord(r.score); })
+        .catch(() => {});
+    } catch {
+      // A dropped frame is harmless; the window slides on.
+    }
+  });
+
   /** A typed question takes the same path as a spoken one. */
   ipcMain.handle('voiceos:ask', async (_e, text) => {
     const question = String(text || '').trim();
@@ -1516,7 +1541,8 @@ async function warmSpokenPhrases() {
   const lines = [
     ...Object.values(OPENINGS).filter(Boolean),
     ...Object.values(SMALL_TALK).flat(),
-    'Let me think about that.'
+    'Let me think about that.',
+    config.get('wake.greeting', 'Yes? How can I help?')
   ];
   try {
     const { cached, rendered } = await services.tts.warmPhrases(lines);
@@ -1589,6 +1615,60 @@ function resumeWarm() {
   if (warmDone) return;
   if (agentBusy > 0 || session.phase !== PHASE.IDLE) return;
   warmBrain({ delayMs: 4000 });
+}
+
+/**
+ * Starts listening for the wake word, if it is switched on and installed.
+ *
+ * Failure here is never fatal: the chord still works, so a missing model or a
+ * runtime that will not load costs the wake word and nothing else.
+ */
+function startWakeWord() {
+  if (!config.get('wake.enabled', true)) return;
+
+  const detector = new WakeDetector({
+    modelDir: path.join(paths.models, 'wake'),
+    word: config.get('wake.phrase', 'hey_jarvis_v0.1'),
+    threshold: config.get('wake.threshold', 0.5),
+    refractoryMs: config.get('wake.refractoryMs', 2500),
+    logger
+  });
+
+  if (!detector.available()) {
+    logger.info('[wake] models not installed; the wake word is off');
+    return;
+  }
+
+  services.wake = detector;
+  detector.load()
+    .then(() => broadcast('wake-state', { listening: true }))
+    .catch((err) => {
+      services.wake = null;
+      logger.warn(`[wake] could not start: ${err.message}`);
+    });
+}
+
+/**
+ * The wake word was heard.
+ *
+ * Greets, then listens exactly as if the chord had been held, so everything
+ * downstream — transcription, the editable transcript, the agent — is the one
+ * path rather than a second one that drifts out of step.
+ */
+function onWakeWord(score) {
+  if (session.phase !== PHASE.IDLE) return;
+  logger.info(`[wake] heard, ${score.toFixed(3)}`);
+
+  showNotch();
+  // Pre-rendered, so this is instant rather than the start of a wait.
+  speak(config.get('wake.greeting', 'Yes? How can I help?'), { opening: true, force: true });
+
+  // Long enough for the greeting to be out of the way before it starts
+  // listening, or it records itself saying it.
+  setTimeout(() => {
+    if (session.phase !== PHASE.IDLE) return;
+    startSession('agent', { wake: true });
+  }, config.get('wake.listenAfterMs', 1200));
 }
 
 /** Monotonic id for one question-and-answer, so late audio can be discarded. */

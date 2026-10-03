@@ -326,7 +326,78 @@ async function prewarmMic() {
   }
 }
 
+/**
+ * Sends 80ms frames of the open microphone to the wake-word detector.
+ *
+ * 1280 samples at 16kHz is the frame the models were trained against, so the
+ * audio is downsampled here and buffered to exactly that length rather than
+ * sent in whatever size the audio graph happens to deliver.
+ *
+ * This runs for as long as the app does. It is the one piece that listens
+ * without being asked to, so it does as little as possible: no recognition, no
+ * recording, no retention — the frames go straight to a scorer and are gone.
+ */
+const WAKE_FRAME = 1280;
+let wakeCtx = null;
+let wakeNode = null;
+let wakeSource = null;
+let wakeBuffer = new Float32Array(0);
+
+async function startWakeListening() {
+  if (wakeNode) return;
+  const stream = await prewarmMic();
+  if (!stream) return;
+
+  try {
+    wakeCtx = new AudioContext();
+    wakeSource = wakeCtx.createMediaStreamSource(stream);
+    wakeNode = wakeCtx.createScriptProcessor(4096, 1, 1);
+
+    wakeNode.onaudioprocess = (event) => {
+      // While a session is running the user is already talking to it, and
+      // the main process ignores these anyway; not sending them saves the
+      // downsample and the copy.
+      if (capture.stream || !wakeNode) return;
+
+      const input = event.inputBuffer.getChannelData(0);
+      const down = downsample(input, wakeCtx.sampleRate, TARGET_RATE);
+
+      const joined = new Float32Array(wakeBuffer.length + down.length);
+      joined.set(wakeBuffer, 0);
+      joined.set(down, wakeBuffer.length);
+
+      let offset = 0;
+      while (joined.length - offset >= WAKE_FRAME) {
+        const frame = joined.subarray(offset, offset + WAKE_FRAME);
+        offset += WAKE_FRAME;
+        const pcm = floatToPcm16(frame);
+        bridge.wakeAudio({ pcm: pcm.buffer });
+      }
+      wakeBuffer = joined.slice(offset);
+    };
+
+    wakeSource.connect(wakeNode);
+    // Required for the processor to run, but muted: routing the microphone to
+    // the speakers would be a feedback loop.
+    const silence = wakeCtx.createGain();
+    silence.gain.value = 0;
+    wakeNode.connect(silence);
+    silence.connect(wakeCtx.destination);
+  } catch (err) {
+    console.error('[wake] could not listen: ' + err.message);
+    stopWakeListening();
+  }
+}
+
+function stopWakeListening() {
+  if (wakeNode) { wakeNode.onaudioprocess = null; try { wakeNode.disconnect(); } catch {} wakeNode = null; }
+  if (wakeSource) { try { wakeSource.disconnect(); } catch {} wakeSource = null; }
+  if (wakeCtx) { wakeCtx.close().catch(() => {}); wakeCtx = null; }
+  wakeBuffer = new Float32Array(0);
+}
+
 function releaseWarmMic() {
+  stopWakeListening();
   if (!warmStream) return;
   for (const track of warmStream.getTracks()) track.stop();
   warmStream = null;
@@ -1033,6 +1104,13 @@ el.card.addEventListener('click', (e) => {
 });
 
 // Square against a bezel, rounded when floating free.
+// Main confirms the detector actually loaded before the microphone is tapped,
+// so a missing model or a runtime that will not start costs nothing here.
+bridge.onWakeState(({ listening }) => {
+  if (listening) startWakeListening();
+  else stopWakeListening();
+});
+
 bridge.onDocked((docked) => { document.documentElement.dataset.docked = docked || 'top'; });
 
 // Hover is reported by the main process, since this window never receives the
