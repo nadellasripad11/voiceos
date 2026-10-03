@@ -765,6 +765,7 @@ const OPENINGS = {
   list_events: 'Looking at your calendar.',
   create_event: 'Adding that.',
   list_coursework: 'Checking what is due.',
+  my_day: 'Let me look at your day.',
   search_drive: 'Searching your Drive.',
   search_web: 'Searching the web.',
   answer_from_web: 'Looking that up.',

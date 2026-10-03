@@ -101,6 +101,87 @@ function buildRawEmail({ to, subject, body, cc, replyTo, inReplyTo, references }
 const googleTools = (ctx) => [
   // --- Gmail --------------------------------------------------------------
   {
+    name: 'my_day',
+    appId: 'system',
+    description: 'What the user has on today: calendar, what is due, and new mail. Use for "what do I have today", "what is going on today", "brief me".',
+    parameters: obj({}),
+    run: async () => {
+      // The three sections are independent, so they go at once: in sequence
+      // this would cost the sum of them and together it costs the slowest.
+      const tools = googleTools(ctx);
+      const byName = new Map(tools.map((t) => [t.name, t]));
+      const safely = async (name, args) => {
+        const tool = byName.get(name);
+        if (!tool) return null;
+        try { return await tool.run(args || {}); } catch (err) {
+          ctx.logger.debug?.(`[my_day] ${name}: ${err.message}`);
+          return null;
+        }
+      };
+
+      const [events, work, mail] = await Promise.all([
+        safely('list_events', { days: 1, limit: 10 }),
+        safely('list_coursework', { limit: 6 }),
+        safely('list_email', { query: 'is:unread in:inbox', limit: 6 })
+      ]);
+
+      const sections = [];
+      const cards = [];
+      const counts = [];
+      let headline = null;
+
+      if (events && events.ok) {
+        const list = events.found || [];
+        sections.push(`CALENDAR\n${events.summary}`);
+        cards.push(...list);
+        if (list.length) {
+          counts.push(`${list.length} thing${list.length === 1 ? '' : 's'} on your calendar`);
+          // The first thing is said separately: it is the one piece of detail
+          // worth hearing rather than reading.
+          headline = `First up, ${list[0].title}${list[0].subtitle ? ` at ${String(list[0].subtitle).split(' · ')[0]}` : ''}.`;
+        } else {
+          counts.push('nothing on your calendar');
+        }
+      }
+
+      if (work && work.ok) {
+        const outstanding = work.found || [];
+        sections.push(`DUE\n${work.summary}`);
+        cards.push(...outstanding);
+        counts.push(outstanding.length
+          ? `${outstanding.length} assignment${outstanding.length === 1 ? '' : 's'} due`
+          : 'nothing due');
+      }
+
+      if (mail && mail.ok) {
+        const unread = mail.found || [];
+        if (unread.length) {
+          sections.push(`UNREAD\n${mail.summary}`);
+          cards.push(...unread.slice(0, 3));
+          counts.push(`${unread.length} unread email${unread.length === 1 ? '' : 's'}`);
+        } else {
+          counts.push('no unread email');
+        }
+      }
+
+      if (!sections.length) {
+        return {
+          ok: true,
+          summary: 'I could not reach your calendar, classwork or mail. Open Apps to connect an account.',
+          spoken: 'I could not reach any of your accounts.'
+        };
+      }
+
+      // One sentence of counts, then the single detail worth hearing.
+      const list = counts.length > 1
+        ? `${counts.slice(0, -1).join(', ')} and ${counts[counts.length - 1]}`
+        : counts[0] || '';
+      const spoken = [list ? `You have ${list}.` : 'Your day looks clear.', headline].filter(Boolean).join(' ');
+
+      return { ok: true, summary: sections.join('\n\n'), spoken, found: cards.slice(0, 8) };
+    }
+  },
+  {
     name: 'list_email',
     appId: 'gmail',
     description: 'List recent emails. Use for "what\'s in my inbox", "any new email", "unread mail".',

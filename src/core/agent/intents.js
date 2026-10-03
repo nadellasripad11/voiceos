@@ -354,6 +354,19 @@ const INTENTS = [
     tool: 'search_web',
     args: (m) => ({ query: m[1].trim() })
   },
+  // --- The day -------------------------------------------------------------
+  // "What do we have today" is a question about this person's day, and was
+  // being answered from the web: "Today is celebrated on National Today."
+  // Guarded so that naming one of the parts still goes to that part — asking
+  // what is on the calendar should not return a whole briefing.
+  {
+    re: /\b(?:what(?:'?s| is| do| have)?\s+)?(?:do\s+)?(?:we|i)\s+(?:have|got|need to do)\b[^?]{0,24}\b(?:today|on today|going on)\b|\bbrief me\b|\bcatch me up\b|\bwhat(?:'?s| is)\s+(?:my\s+)?day\s+look\s+like\b|\bhow does (?:my|the) day look\b|\bwhat(?:'?s| is) (?:on|up) today\b/i,
+    tool: 'my_day',
+    guard: (_m, text) =>
+      !/\b(calendar|email|inbox|mail|homework|assignment|quiz|test|exam|grade|weather|playing)\b/i.test(text),
+    args: () => ({})
+  },
+
   // --- The user's own data -------------------------------------------------
   // These must come before the open-ended web lookup. The web does not know
   // the user's grades, and a model given search results about grades will
