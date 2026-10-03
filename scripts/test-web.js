@@ -88,6 +88,26 @@ const route = (text) => {
   check('95 is a thunderstorm', describeCode(95) === 'a thunderstorm');
   check('an unknown code still reads', describeCode(999) === 'unsettled');
 
+  console.log('\nA question about your own data never goes to the web:');
+  // The web does not know the user's grades, and a model handed search results
+  // about grades will produce something that reads exactly like an answer —
+  // which is what happened: 64 seconds to invent "[1] Overall grade average
+  // [2] No grades assigned". That is worse than no answer at all.
+  const personal = [
+    ['Hey, um, can you go to Google and check my grades on Canvas?', 'list_grades'],
+    ['what are my grades', 'list_grades'],
+    ["what's my gpa", 'list_grades'],
+    ['check my marks', 'list_grades'],
+    ['my balance on paypal', 'personal_data']
+  ];
+  for (const [text, want] of personal) {
+    const r = route(text);
+    check(`"${text.slice(0, 44)}" -> ${want}`, r && r.tool === want, JSON.stringify(r));
+  }
+  check('and none of them is a web lookup',
+    personal.every(([text]) => (route(text) || {}).tool !== 'answer_from_web'),
+    'one of them still searches the web');
+
   console.log('\nSites open by name:');
   const sites = [
     ['go to canvas', 'canvas.instructure.com'],

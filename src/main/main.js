@@ -903,7 +903,7 @@ async function activeAppBadge() {
   }
 }
 
-function startSession(mode, { handsFree = false, wake = false } = {}) {
+function startSession(mode, { handsFree = false, wake = false, followUp = false } = {}) {
   if (session.phase !== PHASE.IDLE) return;
   const status = services.stt.status();
   if (!status.ready) {
@@ -927,7 +927,7 @@ function startSession(mode, { handsFree = false, wake = false } = {}) {
   pauseWarm();
   armWatchdog();
   showNotch();
-  broadcast('session-start', { mode, handsFree, wake, config: config.all(), position: config.get('ui.notchPosition', 'top') });
+  broadcast('session-start', { mode, handsFree, wake, followUp, config: config.all(), position: config.get('ui.notchPosition', 'top') });
   // Read the selection now, while it is still the user's: showing the overlay
   // or anything they do next can clear it. Edit Mode needs it, and it is only
   // read for the chord Edit shares, not for Agent Mode.
@@ -1307,6 +1307,23 @@ function registerIpc() {
    * conversation under them.
    */
   let wakeFramesSeen = 0;
+  /**
+   * The next turn of a conversation, asked for by the renderer once the spoken
+   * reply has finished playing. Only it knows when that is; starting earlier
+   * means recording itself saying the last answer.
+   */
+  ipcMain.on('voiceos:start-follow-up', () => {
+    if (!config.get('conversation.enabled', true)) return;
+    if (session.phase !== PHASE.IDLE) return;
+    if (conversationTurns >= config.get('conversation.maxTurns', 12)) {
+      logger.info('[conversation] turn limit reached; waiting to be asked for again');
+      conversationTurns = 0;
+      return;
+    }
+    conversationTurns++;
+    startSession('agent', { wake: true, followUp: true });
+  });
+
   ipcMain.on('voiceos:wake-audio', (_e, { pcm }) => {
     const detector = services.wake;
     if (!detector || session.phase !== PHASE.IDLE) return;
@@ -1655,9 +1672,13 @@ function startWakeWord() {
  * downstream — transcription, the editable transcript, the agent — is the one
  * path rather than a second one that drifts out of step.
  */
+/** Turns taken in the current conversation, so it cannot run away. */
+let conversationTurns = 0;
+
 function onWakeWord(score) {
   if (session.phase !== PHASE.IDLE) return;
   logger.info(`[wake] heard, ${score.toFixed(3)}`);
+  conversationTurns = 0;
 
   showNotch();
   // Pre-rendered, so this is instant rather than the start of a wait.

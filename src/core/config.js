@@ -39,11 +39,17 @@ const DEFAULTS = {
       // Silence only ends the utterance once speech has actually been heard.
       // Counting silence from the moment recording starts was cutting people
       // off while they drew breath before their first word.
-      silenceMs: 1500,
-      threshold: 0.008,
+      silenceMs: 900,               // a natural pause, not a pause for thought
+      threshold: 0.008,             // the floor; the room is measured on top of it
+      // Speech counts as this many times the measured room noise. Below about
+      // 2.5 a quiet room's own hiss reads as talking; above about 5 a softly
+      // spoken word reads as silence.
+      noiseFactor: 3.5,
       minRecordMs: 1200,
-      maxUtteranceMs: 1200000,
-      warnAtMs: 1140000
+      // Nobody speaks one command for two minutes. All that cap ever decided
+      // was how long you wait once silence detection has already failed.
+      maxUtteranceMs: 20000,
+      warnAtMs: 15000,
     }
   },
 
@@ -130,6 +136,17 @@ const DEFAULTS = {
     // repeatedly as the window slides across it.
     refractoryMs: 2500,
     greeting: 'Hey sir, how can I help you?'
+  },
+
+  // After it answers, it listens for a reply so you do not have to say its
+  // name again. Only for followUpMs, and only after a conversation it
+  // started — never open-ended.
+  conversation: {
+    enabled: true,
+    followUpMs: 5000,
+    // A conversation cannot run away: after this many turns it stops and
+    // waits to be asked for again.
+    maxTurns: 12
   },
 
   ui: {

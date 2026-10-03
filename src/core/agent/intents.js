@@ -354,6 +354,25 @@ const INTENTS = [
     tool: 'search_web',
     args: (m) => ({ query: m[1].trim() })
   },
+  // --- The user's own data -------------------------------------------------
+  // These must come before the open-ended web lookup. The web does not know
+  // the user's grades, and a model given search results about grades will
+  // produce something that reads exactly like an answer.
+  {
+    re: /\b(?:my|our)\b[^?]{0,20}\b(grades?|marks?|gpa|scores?|transcript)\b/i,
+    tool: 'list_grades',
+    args: () => ({})
+  },
+  {
+    // Named a service we have no connection to, so say that rather than guess.
+    re: /\b(?:my|our)\b[^?]{0,24}\b(grades?|marks?|gpa|assignments?|homework|classes|courses|schedule|timetable|account|balance|orders?)\b/i,
+    tool: 'personal_data',
+    args: (m, text) => ({
+      topic: m[1].toLowerCase(),
+      app: (/\b(canvas|blackboard|schoology|powerschool|moodle|classroom)\b/i.exec(text) || [])[1] || null
+    })
+  },
+
   // --- Weather -------------------------------------------------------------
   // One of the most common questions anyone asks, and the one most likely to
   // be answered with an invented number, so it is routed deterministically to

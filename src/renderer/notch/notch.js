@@ -403,10 +403,11 @@ function releaseWarmMic() {
   warmStream = null;
 }
 
-async function startCapture(mode, config, { handsFree = false } = {}) {
+async function startCapture(mode, config, { handsFree = false, followUp = false } = {}) {
   if (capture.stream) return;
   Object.assign(capture, {
-    mode, config, handsFree, chunks: [], stopping: false, silenceSince: 0, hasSpoken: false, warned: false
+    mode, config, handsFree, followUp, chunks: [], stopping: false, silenceSince: 0, hasSpoken: false, warned: false,
+    noiseFloor: null
   });
 
   clearBody();
@@ -480,17 +481,36 @@ function maybeAutoStop(level) {
   const warnAt = vad.warnAtMs || Math.max(0, limit - 60000);
   if (!capture.warned && elapsed > warnAt) {
     capture.warned = true;
-    const left = Math.max(1, Math.round((limit - elapsed) / 60000));
-    setState('listening', { hint: `Finishing in ${left} minute${left === 1 ? '' : 's'}…` });
+    setState('listening', { hint: 'Finishing…' });
   }
   if (elapsed > limit) return finishCapture();
 
-  if (level >= vad.threshold) {
+  // The room, measured rather than assumed. This tracks the quietest level
+  // seen and drifts up slowly, so it settles within about a second and
+  // follows the room if it changes, instead of trusting one number that was
+  // only ever right in a quiet room.
+  capture.noiseFloor = capture.noiseFloor === null
+    ? level
+    : Math.min(level, capture.noiseFloor * 1.02 + 0.00002);
+
+  const speaking = Math.max(vad.threshold || 0.008, capture.noiseFloor * (vad.noiseFactor || 3.5));
+
+  if (level >= speaking) {
     capture.hasSpoken = true;
     capture.silenceSince = 0;
     return;
   }
-  if (!capture.hasSpoken) return;
+  if (!capture.hasSpoken) {
+    // Nobody replied. The window is short deliberately: this is the only time
+    // the microphone is recorded without the wake word or a chord, so it ends
+    // rather than waiting out the ordinary cap.
+    const window = (capture.config && capture.config.conversation && capture.config.conversation.followUpMs) || 5000;
+    if (capture.followUp && elapsed > window) {
+      conversationOpen = false;
+      abandonCapture('nobody replied');
+    }
+    return;
+  }
   if (elapsed < (vad.minRecordMs || 1200)) return;
   // Hands-free means the user is in charge of when it ends, so a pause to
   // think must not cut them off.
@@ -572,6 +592,22 @@ function hideLiveText() {
   if (el.liveText) { el.liveText.hidden = true; el.liveText.textContent = ''; }
   if (el.wave) el.wave.hidden = false;
   if (el.hint) el.hint.hidden = false;
+}
+
+/**
+ * Ends a turn that had nothing in it.
+ *
+ * Distinct from finishing: there is no audio worth transcribing, so nothing is
+ * sent anywhere and the overlay simply goes quiet.
+ */
+function abandonCapture(reason) {
+  if (capture.stopping) return;
+  capture.stopping = true;
+  teardownCapture();
+  stopTimer();
+  bridge.cancel();
+  collapseToIdle();
+  console.log('[conversation] ' + reason);
 }
 
 function teardownCapture() {
@@ -718,9 +754,10 @@ bridge.onSessionIdle(({ hotkeys, position } = {}) => {
   }
 });
 
-bridge.onSessionStart(({ mode, config, position, handsFree }) => {
+bridge.onSessionStart(({ mode, config, position, handsFree, wake, followUp }) => {
   applyPosition(position);
-  startCapture(mode, config, { handsFree });
+  conversationOpen = Boolean(wake);
+  startCapture(mode, config, { handsFree, followUp });
 });
 bridge.onSessionStop(() => finishCapture());
 
@@ -814,6 +851,14 @@ bridge.onSessionError(({ message, detail }) => fail(message, detail));
  * Only one answer is ever audible: a new turn drops whatever the previous one
  * had left to say.
  */
+/**
+ * Whether a reply is expected back.
+ *
+ * Set when a conversation starts and cleared the moment the follow-up is
+ * asked for, so one answer opens exactly one window.
+ */
+let conversationOpen = false;
+
 let speaking = null;
 let speechQueue = [];
 let speechTurn = 0;
@@ -844,6 +889,12 @@ async function drainSpeech() {
     }
   } finally {
     speechDraining = false;
+    // The reply has finished playing, so it is safe to listen without
+    // recording ourselves saying it.
+    if (conversationOpen && !speechQueue.length) {
+      conversationOpen = false;
+      bridge.startFollowUp();
+    }
   }
 }
 

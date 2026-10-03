@@ -257,6 +257,39 @@ const musicSearchTools = (ctx) => [
   }
 ];
 
+const personalTools = (ctx) => [
+  {
+    name: 'personal_data',
+    appId: 'system',
+    description: "Explain that something about the user's own account is not connected. Never searches the web.",
+    parameters: obj({ topic: str('What was asked about, e.g. grades'), app: str('Which service, if named') }),
+    run: async ({ topic = 'that', app = null } = {}) => {
+      // The web cannot answer a question about the user's own data, and a
+      // model handed search results about it will invent an answer that looks
+      // right. Saying what is missing is more use than that.
+      const named = app ? app.replace(/^\w/, (ch) => ch.toUpperCase()) : null;
+      const status = ctx.connections && ctx.connections.status ? ctx.connections.status() : {};
+      const connected = Object.entries(status)
+        .filter(([, v]) => v && v.connected)
+        .map(([k]) => k);
+
+      const detail = named
+        ? `${named} is not connected, so I cannot see your ${topic}.`
+        : `I cannot see your ${topic} — the account it lives in is not connected.`;
+      const next = connected.length
+        ? ` Connected right now: ${connected.join(', ')}. Open Apps to add another.`
+        : ' Open Apps to connect an account.';
+
+      return {
+        ok: true,
+        summary: detail + next,
+        spoken: named ? `${named} is not connected, so I cannot check your ${topic}.`
+          : `I cannot see your ${topic}; that account is not connected.`
+      };
+    }
+  }
+];
+
 const weatherTools = (ctx) => [
   {
     name: 'weather',
@@ -735,6 +768,8 @@ const OPENINGS = {
   search_drive: 'Searching your Drive.',
   search_web: 'Searching the web.',
   answer_from_web: 'Looking that up.',
+  list_grades: 'Checking your grades.',
+  personal_data: null,
   weather: 'Checking the forecast.',
   fetch_page: 'Reading that page.',
   search_files: 'Looking through your files.',
@@ -778,6 +813,7 @@ function buildTools(ctx) {
     ...systemTools(ctx),
     ...smallTalkTools(),
     ...weatherTools(ctx),
+    ...personalTools(ctx),
     ...musicSearchTools(ctx),
     // Only offered when a connection manager is present to resolve tokens.
     ...(ctx.connections ? googleTools(ctx) : []),

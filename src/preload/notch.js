@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('voiceos', {
   onTranscript: (fn) => on('transcript', fn),
   transcribePartial: (payload) => ipcRenderer.invoke('voiceos:transcribe-partial', payload),
   wakeAudio: (payload) => ipcRenderer.send('voiceos:wake-audio', payload),
+  startFollowUp: () => ipcRenderer.send('voiceos:start-follow-up'),
   onWakeState: (fn) => on('wake-state', fn),
   onSpeak: (fn) => on('speak', fn),
   onAgentConfirm: (fn) => on('agent-confirm', fn),

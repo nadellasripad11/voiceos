@@ -311,6 +311,88 @@ const googleTools = (ctx) => [
 
   // --- Classroom ----------------------------------------------------------
   {
+    name: 'list_grades',
+    appId: 'google-classroom',
+    description: 'The user\'s own grades, marks or GPA for their classes.',
+    parameters: obj({ limit: num('Max assignments to list, default 8') }),
+    run: async ({ limit = 8 } = {}) => {
+      const courses = await api(ctx, 'google-classroom',
+        'https://classroom.googleapis.com/v1/courses?courseStates=ACTIVE&pageSize=20');
+      const active = courses.courses || [];
+      if (!active.length) return { ok: true, summary: 'No active classes.', spoken: 'You have no active classes.' };
+
+      const lines = [];
+      const cards = [];
+      let totalGot = 0;
+      let totalPossible = 0;
+      let gradedCount = 0;
+
+      for (const course of active) {
+        const work = await api(ctx, 'google-classroom',
+          `https://classroom.googleapis.com/v1/courses/${course.id}/courseWork?pageSize=100`).catch(() => ({}));
+        const items = work.courseWork || [];
+        if (!items.length) continue;
+
+        const maxBy = new Map(items.map((w) => [w.id, w.maxPoints]));
+        const titleBy = new Map(items.map((w) => [w.id, w.title]));
+
+        const subs = await api(ctx, 'google-classroom',
+          `https://classroom.googleapis.com/v1/courses/${course.id}/courseWork/-/studentSubmissions?pageSize=200`)
+          .catch(() => ({}));
+
+        let got = 0;
+        let possible = 0;
+        let graded = 0;
+        const perItem = [];
+
+        for (const s of subs.studentSubmissions || []) {
+          const max = maxBy.get(s.courseWorkId);
+          if (s.assignedGrade == null || max == null) continue;
+          graded++;
+          got += s.assignedGrade;
+          possible += max;
+          perItem.push({ title: titleBy.get(s.courseWorkId) || 'Assignment', grade: s.assignedGrade, max });
+        }
+
+        if (!graded) {
+          lines.push(`${course.name}: nothing graded yet.`);
+          continue;
+        }
+
+        totalGot += got;
+        totalPossible += possible;
+        gradedCount += graded;
+
+        const pct = Math.round((got / possible) * 1000) / 10;
+        lines.push(`${course.name}: ${pct}% (${got} of ${possible} across ${graded} assignment${graded === 1 ? '' : 's'})`);
+        cards.push({ icon: 'canvas.webp', title: `${course.name} — ${pct}%`, subtitle: `${got}/${possible} over ${graded} graded` });
+
+        // The ones that lost marks are the interesting ones.
+        for (const it of perItem.filter((x) => x.grade < x.max).slice(0, limit)) {
+          lines.push(`   ${it.title}: ${it.grade}/${it.max}`);
+        }
+      }
+
+      if (!gradedCount) {
+        return {
+          ok: true,
+          summary: `Nothing is graded yet in ${active.map((c) => c.name).join(', ')}.`,
+          spoken: 'Nothing has been graded yet.'
+        };
+      }
+
+      const overall = Math.round((totalGot / totalPossible) * 1000) / 10;
+      return {
+        ok: true,
+        summary: lines.join('\n'),
+        spoken: active.length === 1
+          ? `You are on ${overall} percent, ${totalGot} out of ${totalPossible}.`
+          : `Overall ${overall} percent across ${active.length} classes.`,
+        found: cards
+      };
+    }
+  },
+  {
     name: 'list_coursework',
     appId: 'google-classroom',
     description: 'What is due for school. Use for "what homework do I have", "what\'s due this week".',
