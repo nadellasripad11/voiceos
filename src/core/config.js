@@ -152,6 +152,10 @@ const DEFAULTS = {
   ui: {
     // Show the words as they are spoken, in place of the level meter, and
     // hand the finished transcript back for correction before it is acted on.
+    // Show a picture when the question is about something that can be seen.
+    // Fetched in the main process and handed to the overlay as bytes, so the
+    // overlay itself never makes a network request.
+    images: true,
     liveTranscript: true,
     // How long the transcript waits in the box before sending itself. Any
     // keystroke cancels it, so this is a grace period rather than a prompt.

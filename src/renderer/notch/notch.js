@@ -22,6 +22,7 @@ const el = {
   compose: document.getElementById('compose'),
   composeInput: document.getElementById('composeInput'),
   liveText: document.getElementById('liveText'),
+  answerImage: document.getElementById('answerImage'),
   send: document.getElementById('send'),
   replay: document.getElementById('replay'),
   foundWrap: document.getElementById('foundWrap'),
@@ -72,6 +73,7 @@ function setState(state, { hint } = {}) {
 }
 
 function clearBody() {
+  showImage(null);
   el.askedText.textContent = '';
   el.answerText.innerHTML = '';
   el.foundList.innerHTML = '';
@@ -163,6 +165,33 @@ function showAnswer(text) {
     });
     el.answerText.appendChild(p);
   }
+}
+
+/**
+ * The picture that came with an answer.
+ *
+ * Arrives as bytes rather than a URL: the content policy allows data URIs and
+ * nothing remote, so the overlay never makes a request of its own.
+ */
+function showImage(image) {
+  const wrap = el.answerImage;
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!image || !image.data) { wrap.hidden = true; return; }
+
+  const img = document.createElement('img');
+  img.className = 'answer-img';
+  img.src = `data:${image.mime || 'image/jpeg'};base64,${image.data}`;
+  img.alt = image.title || '';
+  wrap.appendChild(img);
+
+  if (image.caption || image.source) {
+    const cap = document.createElement('div');
+    cap.className = 'answer-img-caption';
+    cap.textContent = [image.caption, image.source].filter(Boolean).join(' · ');
+    wrap.appendChild(cap);
+  }
+  wrap.hidden = false;
 }
 
 function showFound(items = []) {
@@ -829,6 +858,7 @@ bridge.onAgentResult((payload) => {
     clearBody();
     showAsked(payload.question);
     showAnswer(payload.answer);
+    showImage(payload.image);
     showFound(payload.found || []);
     if (payload.confirm) showConfirm(payload.confirm);
     el.meta.textContent = [payload.ms ? `${payload.ms}ms` : null, payload.model]

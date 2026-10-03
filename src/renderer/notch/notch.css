@@ -508,3 +508,22 @@ kbd {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+
+/* A picture that came with an answer. Capped in height so a tall portrait
+   cannot push the text off the island, and the width follows the card. */
+.answer-image {
+  margin: 12px 0 2px;
+}
+.answer-img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.answer-img-caption {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--island-dim, rgba(255, 255, 255, 0.55));
+}

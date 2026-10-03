@@ -21,6 +21,7 @@ const path = require('path');
 const os = require('os');
 const { paths } = require('../paths');
 const { answerFromWeb, getWeather } = require('./web');
+const { pictureFor, imageSubject } = require('./images');
 const { googleTools } = require('./tools-google');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -257,6 +258,30 @@ const musicSearchTools = (ctx) => [
   }
 ];
 
+const imageTools = (ctx) => [
+  {
+    name: 'show_image',
+    appId: 'web-search',
+    description: 'Show a picture of something. Use for "what does X look like" or "show me a picture of X".',
+    parameters: obj({ subject: str('What to show a picture of') }, ['subject']),
+    run: async ({ subject }) => {
+      const picture = await pictureFor(`show me pictures of ${subject}`, { logger: ctx.logger });
+      if (!picture) {
+        return { ok: true, summary: `I could not find a picture of ${subject}.`, spoken: `I could not find one.` };
+      }
+      return {
+        ok: true,
+        summary: [picture.title, picture.caption].filter(Boolean).join(' — '),
+        spoken: `Here is ${picture.title}.`,
+        image: picture,
+        found: picture.link
+          ? [{ glyph: '🖼️', title: picture.title, subtitle: picture.source, url: picture.link }]
+          : []
+      };
+    }
+  }
+];
+
 const personalTools = (ctx) => [
   {
     name: 'personal_data',
@@ -484,13 +509,23 @@ const webTools = (ctx) => [
     appId: 'web-search',
     description: 'Look up a direct factual answer, such as a definition, a conversion, or who someone is.',
     parameters: obj({ query: str('The question to look up') }, ['query']),
-    run: async ({ query }, { signal } = {}) => answerFromWeb({
-      query,
-      provider: ctx.provider,
-      model: ctx.config.get('llm.model'),
-      logger: ctx.logger,
-      signal
-    })
+    run: async ({ query }, { signal } = {}) => {
+      // The picture is fetched alongside the answer rather than after it:
+      // they are independent, and waiting for one to start the other would
+      // make an illustrated answer slower than a plain one.
+      const wantsPicture = ctx.config.get('ui.images', true) && Boolean(imageSubject(query));
+      const [answer, picture] = await Promise.all([
+        answerFromWeb({
+          query,
+          provider: ctx.provider,
+          model: ctx.config.get('llm.model'),
+          logger: ctx.logger,
+          signal
+        }),
+        wantsPicture ? pictureFor(query, { logger: ctx.logger }).catch(() => null) : Promise.resolve(null)
+      ]);
+      return picture ? { ...answer, image: picture } : answer;
+    }
   },
   {
     name: 'fetch_page',
@@ -769,6 +804,7 @@ const OPENINGS = {
   search_drive: 'Searching your Drive.',
   search_web: 'Searching the web.',
   answer_from_web: 'Looking that up.',
+  show_image: 'Finding a picture.',
   list_grades: 'Checking your grades.',
   personal_data: null,
   weather: 'Checking the forecast.',
@@ -815,6 +851,7 @@ function buildTools(ctx) {
     ...smallTalkTools(),
     ...weatherTools(ctx),
     ...personalTools(ctx),
+    ...imageTools(ctx),
     ...musicSearchTools(ctx),
     // Only offered when a connection manager is present to resolve tokens.
     ...(ctx.connections ? googleTools(ctx) : []),

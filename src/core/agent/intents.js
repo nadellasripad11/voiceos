@@ -354,6 +354,19 @@ const INTENTS = [
     tool: 'search_web',
     args: (m) => ({ query: m[1].trim() })
   },
+  // --- Pictures ------------------------------------------------------------
+  // Asked for a picture outright, so there is nothing to search or summarise.
+  {
+    re: /^(?:please\s+)?(?:show|find|get)\s+(?:me\s+)?(?:a\s+|an\s+|some\s+)?(?:pictures?|photos?|images?)\s+of\s+(.+?)[\s.!?]*$/i,
+    tool: 'show_image',
+    args: (m) => ({ subject: m[1].trim() })
+  },
+  {
+    re: /^(?:what\s+)?(?:does|do)\s+(?:a\s+|an\s+|the\s+)?(.+?)\s+look\s+like[\s.!?]*$/i,
+    tool: 'show_image',
+    args: (m) => ({ subject: m[1].trim() })
+  },
+
   // --- The day -------------------------------------------------------------
   // "What do we have today" is a question about this person's day, and was
   // being answered from the web: "Today is celebrated on National Today."
