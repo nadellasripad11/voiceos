@@ -20,7 +20,9 @@
     "test:live": "node scripts/test-tts-cache.js && node scripts/test-stream.js && node scripts/test-agent-stream.js && node scripts/test-bridge.js",
     "bench": "node scripts/bench-latency.js"
   },
-  "dependencies": {},
+  "dependencies": {
+    "kokoro-js": "^1.2.1"
+  },
   "optionalDependencies": {
     "uiohook-napi": "^1.5.4"
   },

@@ -26,6 +26,7 @@ const { OPENINGS, SMALL_TALK } = require('../core/agent/tools');
 const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { SpeechStream } = require('../core/tts/stream');
+const { KokoroTts } = require('../core/tts/kokoro');
 const { getBrowser } = require('../core/browser/cdp');
 const { ConnectionManager } = require('../core/connect/manager');
 const { createLogger } = require('./logger');
@@ -163,17 +164,39 @@ function writeCredentials(next) {
   try { fs.chmodSync(paths.credentials, 0o600); } catch { /* best effort on Windows */ }
 }
 
+/**
+ * The speech engine named in settings, falling back when it cannot load.
+ *
+ * Kokoro needs an optional dependency; if it is missing, speech must still
+ * work rather than the app starting mute.
+ */
+function buildTts() {
+  const engine = config.get('tts.engine', 'kokoro');
+  if (engine === 'kokoro' && KokoroTts.available()) {
+    return new KokoroTts({
+      voice: config.get('tts.voice', 'af_heart'),
+      speed: config.get('tts.speed', 1),
+      dtype: config.get('tts.dtype', 'q4'),
+      logger
+    });
+  }
+  if (engine === 'kokoro') {
+    logger.warn('[tts] kokoro-js is not installed; falling back to Piper');
+  }
+  return new PiperTts({
+    voice: config.get('tts.piperVoice', 'en_US-amy-medium'),
+    speed: config.get('tts.speed', 1),
+    logger
+  });
+}
+
 async function initServices() {
   ensureDirs();
   services.bridge = getBridge({ logger });
   services.stt = buildStt();
   services.provider = buildProvider();
   services.transcripts = new TranscriptStore({ config, logger });
-  services.tts = new PiperTts({
-    voice: config.get('tts.voice'),
-    speed: config.get('tts.speed'),
-    logger
-  });
+  services.tts = buildTts();
   services.browser = getBrowser({
     logger,
     profile: config.get('browser.profile', 'voiceos'),
@@ -252,7 +275,7 @@ async function initServices() {
 function reloadServices() {
   services.stt = buildStt();
   services.provider = buildProvider();
-  services.tts = new PiperTts({ voice: config.get('tts.voice'), speed: config.get('tts.speed'), logger });
+  services.tts = buildTts();
   services.agent = new Agent({
     provider: services.provider,
     config,

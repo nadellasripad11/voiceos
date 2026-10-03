@@ -62,13 +62,23 @@ const DEFAULTS = {
 
   tts: {
     enabled: true,
-    engine: 'piper',              // 'piper' | 'system' | 'off'
-    // Sky: female, and 4.4x quicker to synthesize than the "high" model
-    // (445ms a sentence against 1977ms, which is 0.87x realtime — barely
-    // faster than speaking it). Aria sounds better; set tts.voice to
-    // 'en_US-lessac-high' for it and accept about a second more before each
-    // reply starts.
-    voice: 'en_US-amy-medium',
+    // 'kokoro' is a neural model and sounds like one; 'piper' is a small
+    // vocoder, roughly three times quicker, and sounds like one.
+    //
+    // Measured here: Kokoro at q4 runs at 0.87x realtime — faster than
+    // speaking — while q4 is two and a half times quicker than the obvious q8
+    // on this CPU, which is why the quantisation is pinned rather than left to
+    // the library's default. The fixed phrases are pre-rendered at launch
+    // either way, so the opening line is instant whichever engine is chosen.
+    engine: 'kokoro',             // 'kokoro' | 'piper'
+    dtype: 'q4',                  // kokoro only: 'q4' | 'q8' | 'fp32'
+
+    // Kokoro voices: heart, bella, nicole, sarah, emma (British), michael,
+    // george — or any raw id such as 'af_heart'.
+    voice: 'af_heart',
+
+    // Used only when engine is 'piper'.
+    piperVoice: 'en_US-amy-medium',
     speed: 1.0,
     speakAgentReplies: true,
     speakConfirmations: false
