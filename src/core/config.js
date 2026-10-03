@@ -114,7 +114,19 @@ const DEFAULTS = {
   // guessing wrong the other way overwrites what the user selected.
   // Which player to start when music is asked for and nothing is running.
   media: {
-    defaultPlayer: 'Spotify'
+    defaultPlayer: 'Spotify',
+
+    // Playing a *named* artist needs the web player. The desktop app exposes
+    // nothing to automate — its accessibility tree is empty and no key
+    // sequence starts a search result — and the Web API's playback endpoints
+    // require Premium. The web player's play button is a real element, so it
+    // works on a free account.
+    useWebPlayer: true,
+
+    // Opening the player tab costs about six seconds, once. Turn this on to
+    // pay it at launch instead of on the first request; it opens a browser
+    // window, which is why it is not the default.
+    prewarmPlayer: false
   },
 
   // Say "Hey Jarvis" and it answers, without touching the keyboard.

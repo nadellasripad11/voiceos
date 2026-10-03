@@ -22,6 +22,7 @@ const os = require('os');
 const { paths } = require('../paths');
 const { answerFromWeb, getWeather } = require('./web');
 const { pictureFor, imageSubject } = require('./images');
+const { playOnWeb } = require('../music/spotify-web');
 const { googleTools } = require('./tools-google');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -226,32 +227,42 @@ const musicSearchTools = (ctx) => [
       const term = String(query || '').trim();
       if (!term) return { ok: false, summary: 'Nothing to search for.' };
 
-      // The desktop app answers its own URI scheme, which opens it on the
-      // search without needing an account token or the Web API.
+      // The web player is the only thing that actually starts a named artist
+      // on a free account. The desktop app exposes nothing to automate — its
+      // accessibility tree is empty, and four key sequences were tried against
+      // the real media session without starting anything — and the Web API's
+      // playback endpoints need Premium. The web player's play button is a
+      // real element, so it can simply be clicked.
+      if (ctx.config.get('media.useWebPlayer', true) && ctx.browser) {
+        try {
+          const r = await playOnWeb({ browser: ctx.browser, query: term, logger: ctx.logger });
+          if (r.ok) {
+            return {
+              ok: true,
+              summary: `Playing ${r.track || term}.`,
+              spoken: `Playing ${term}.`,
+              found: [{ icon: 'spotify.webp', title: r.track || term, subtitle: 'Spotify web player' }]
+            };
+          }
+          if (r.needsLogin) {
+            return { ok: false, summary: r.reason, spoken: 'Spotify needs you to log in once in the browser I opened.' };
+          }
+          ctx.logger.warn?.(`[music] web player: ${r.reason}`);
+        } catch (err) {
+          ctx.logger.warn?.(`[music] web player failed: ${err.message}`);
+        }
+      }
+
+      // Falling back: open the desktop app on the search so it is one click
+      // away, and say that rather than claiming to have played something.
       try {
         await ctx.bridge.openUrl(`spotify:search:${encodeURIComponent(term)}`);
       } catch {
         await ctx.bridge.openUrl(`https://open.spotify.com/search/${encodeURIComponent(term)}`).catch(() => {});
       }
-
-      // Give it a moment to come up, then start whatever is top of the list.
-      await new Promise((res) => setTimeout(res, 2500));
-      await ctx.bridge.mediaKey('media_play_pause').catch(() => {});
-      await new Promise((res) => setTimeout(res, 900));
-
-      const status = await ctx.bridge.mediaStatus().catch(() => ({}));
-      const c = status && status.current;
-      if (c && c.title) {
-        return {
-          ok: true,
-          summary: `Playing ${c.title}${c.artist ? ` by ${c.artist}` : ''}.`,
-          spoken: `Playing ${c.title}.`,
-          found: [{ icon: 'spotify.webp', title: c.title, subtitle: [c.artist, c.app].filter(Boolean).join(' · ') }]
-        };
-      }
       return {
         ok: true,
-        summary: `I opened Spotify on "${term}". Press play on the one you want.`,
+        summary: `I opened Spotify on "${term}" — press play on the one you want.`,
         spoken: `I found ${term} on Spotify.`
       };
     }
