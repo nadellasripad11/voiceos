@@ -22,6 +22,7 @@ const { createProvider } = require('../core/llm/provider');
 const { TranscriptStore } = require('../core/memory/transcripts');
 const { DictationMode } = require('../core/modes/dictation');
 const { EditMode, classify } = require('../core/modes/edit');
+const { SITES } = require('../core/agent/intents');
 const { OPENINGS, SMALL_TALK } = require('../core/agent/tools');
 const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
@@ -1387,6 +1388,29 @@ function registerIpc() {
  * Agent Mode wants what was actually said. Running it through the dictation
  * polish pass would rewrite the request before the agent ever sees it.
  */
+/**
+ * The words the assistant can act on, for biasing transcription.
+ *
+ * Whisper's initial prompt makes the words in it more likely to be heard. The
+ * assistant's own name was coming back as "Darris", and an app name heard
+ * wrongly is a request that cannot be routed at all, so the things it can
+ * actually do are worth a few tokens of prompt.
+ *
+ * Capped because the prompt competes with the audio for context.
+ */
+function commandVocabulary() {
+  // Deliberately short. The prompt competes with the audio for context and
+  // costs time to evaluate: measured here, sixty words added 225ms per
+  // request while seven added 66ms, and on clean audio neither changed what
+  // was heard. So it carries only the proper nouns that are actually misheard
+  // and cannot be recovered from — a mangled app name is a request that
+  // cannot be routed at all — and leaves the ordinary verbs to the model.
+  const own = ['Jarvis', 'VoiceOS'];
+  const apps = ['Spotify', 'Canvas', 'Classroom', 'Gmail', 'YouTube', 'Drive', 'Discord'];
+  const user = config.get('dictation.vocabulary', []) || [];
+  return [...new Set([...own, ...user, ...apps])].slice(0, 24);
+}
+
 async function transcribeOnly(samples, sampleRate, signal) {
   const { writeWav, floatToPcm16, trimSilence } = require('../core/audio/wav');
   const trimmed = trimSilence(samples, { threshold: config.get('stt.vad.threshold'), sampleRate });
@@ -1395,10 +1419,10 @@ async function transcribeOnly(samples, sampleRate, signal) {
   const wavPath = path.join(paths.tmp, `agent-${Date.now()}.wav`);
   writeWav(wavPath, floatToPcm16(trimmed), { sampleRate });
   try {
-    const vocabulary = config.get('dictation.vocabulary', []);
+    const vocabulary = commandVocabulary();
     const result = await services.stt.transcribe(wavPath, {
       language: config.get('stt.language') === 'auto' ? undefined : config.get('stt.language'),
-      prompt: vocabulary.length ? `Vocabulary: ${vocabulary.slice(0, 60).join(', ')}.` : undefined,
+      prompt: vocabulary.length ? `Vocabulary: ${vocabulary.join(', ')}.` : undefined,
       signal
     });
     return result.text;

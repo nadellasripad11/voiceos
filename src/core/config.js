@@ -26,8 +26,8 @@ const DEFAULTS = {
   // supplied. Re-run `npm run bench` on better hardware and raise `model`.
   stt: {
     engine: 'whisper.cpp',            // 'whisper.cpp' | 'whisper-server'
-    model: 'ggml-tiny.en-q5_1.bin',   // quantized: ~2x faster, same accuracy here
-    language: 'auto',                 // 'auto' or an ISO code; 100 languages supported
+    model: 'ggml-base.en-q5_1.bin',   // quantized: ~2x faster, same accuracy here
+    language: 'en',                 // 'auto' or an ISO code; 100 languages supported
     translate: false,
     threads: 0,                       // 0 = auto
     beamSize: 1,                      // greedy; raise to 5 for accuracy over speed
