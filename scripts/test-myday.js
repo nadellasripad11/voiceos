@@ -106,10 +106,14 @@ const event = (title, hour) => ({
     check('it succeeds', r.ok === true, JSON.stringify(r));
     check('all three sections are shown',
       /CALENDAR/.test(r.summary) && /DUE/.test(r.summary) && /UNREAD/.test(r.summary), r.summary);
+    // Asserting the counts are present, not the exact wording: spoken lines
+    // are deliberately short, because synthesis time is proportional to how
+    // much is said, and they get shortened again when that matters.
     check('the spoken line counts each one',
-      /2 things on your calendar/.test(r.spoken) && /1 assignment due/.test(r.spoken) && /2 unread emails/.test(r.spoken),
+      /\b2\b.*calendar/.test(r.spoken) && /\b1\b.*due/.test(r.spoken) && /\b2\b.*unread/.test(r.spoken),
       r.spoken);
-    check('and names the first thing', /First up, Standup/.test(r.spoken), r.spoken);
+    check('and names the first thing', /First,? Standup/.test(r.spoken), r.spoken);
+    check('and stays short enough to say quickly', r.spoken.length < 110, `${r.spoken.length} chars`);
     check('it reads as one sentence, not a list of two',
       !/starting with .* and \d+ unread/.test(r.spoken), r.spoken);
     check('cards are produced', (r.found || []).length > 0, String((r.found || []).length));

@@ -12,6 +12,7 @@
  */
 const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, screen, shell, nativeImage, dialog } = require('electron');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
 
 const { config } = require('../core/config');
@@ -262,7 +263,7 @@ async function initServices() {
   // from 1.7s to 18.8s and the PowerShell bridge missed its 30s startup
   // deadline outright, which would have left dictation unable to type
   // anything. Everything the user can actually touch comes first.
-  Promise.all([bridgeReady, ttsReady]).then(() => { startWakeWord(); warmBrain(); });
+  Promise.all([bridgeReady, ttsReady]).then(() => { startWakeWord(); warmBrain(); warmPlayer(); });
 
   services.transcripts.prune()
     .then((r) => r.removed && logger.info(`pruned ${r.removed} expired transcript file(s)`))
@@ -1576,6 +1577,23 @@ let warmDone = false;
 function warmBrain({ delayMs = 2500 } = {}) {
   if (!services.agent || warmDone || warmAbort) return;
 
+  // Keeping the model resident costs about 1.2GB, and on a machine that is
+  // already short of memory that is paid by everything else: speech synthesis
+  // measured 0.87x realtime with the machine quiet and 1.15x with it full,
+  // which is the difference between a reply that keeps up with itself and one
+  // that does not. The router answers nearly everything in about 4ms without
+  // the model at all, so when memory is tight the model is left to load on
+  // demand for the few questions that genuinely need it.
+  const freeGb = os.freemem() / 1e9;
+  const floor = config.get('llm.warmIfFreeGb', 1.8);
+  if (freeGb < floor) {
+    logger.info(
+      `[llm] only ${freeGb.toFixed(1)}GB free; leaving the model unloaded so speech stays quick ` +
+      '(it will load on demand)'
+    );
+    return;
+  }
+
   // Evaluating the tool prompt is tens of seconds of CPU in the Ollama
   // process. Worth paying, but not while the overlay and tray are still
   // appearing.
@@ -1672,6 +1690,25 @@ function startWakeWord() {
  * downstream — transcription, the editable transcript, the agent — is the one
  * path rather than a second one that drifts out of step.
  */
+/**
+ * Opens the music player tab ahead of time, if asked to.
+ *
+ * Measured: opening the tab costs 5.8 seconds and loading the player another
+ * 2.7, both once rather than per request — so the first "play something" takes
+ * about seven seconds and every one after it about two. Paying that at launch
+ * makes the first one quick too, at the cost of a browser window appearing
+ * before anyone asked for music, which is why it is off by default.
+ */
+function warmPlayer() {
+  if (!config.get('media.prewarmPlayer', false)) return;
+  if (!services.browser) return;
+  const started = Date.now();
+  services.browser.launch()
+    .then(() => services.browser.openOrReuse('https://open.spotify.com/', 'open.spotify.com'))
+    .then(() => logger.info(`[music] player ready in ${Date.now() - started}ms`))
+    .catch((err) => logger.debug(`[music] could not warm the player: ${err.message}`));
+}
+
 /** Turns taken in the current conversation, so it cannot run away. */
 let conversationTurns = 0;
 

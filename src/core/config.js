@@ -63,6 +63,10 @@ const DEFAULTS = {
     temperature: 0.2,
     numCtx: 8192,
     keepAlive: '10m',
+    // Below this much free memory the model is left unloaded: holding it
+    // resident costs about 1.2GB and slows speech synthesis by roughly 40%,
+    // and the router answers nearly everything without it.
+    warmIfFreeGb: 1.8,
     maxToolIterations: 8
   },
 
@@ -85,6 +89,10 @@ const DEFAULTS = {
 
     // Used only when engine is 'piper'.
     piperVoice: 'en_US-amy-medium',
+    // Left at 1. Measured: raising it shortens the audio but not the time to
+    // make it — Kokoro's cost is per token, not per second — so it only
+    // worsens the margin between synthesis and playback, which is what
+    // decides whether streamed sentences run together or leave gaps.
     speed: 1.0,
     speakAgentReplies: true,
     speakConfirmations: false

@@ -119,8 +119,11 @@ async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs =
     return {
       ok: true,
       place: place_,
-      spoken: (fellBackToHere ? `I could not find ${place}, so here is ${where.name}. ` : '') +
-        `It's ${temp} and ${sky} in ${where.name}${feelsSpoken}. High of ${high}, low of ${low}.`,
+      // Short on purpose: the place is where the user is standing, and the
+      // detail is on screen. Only the fallback names the place, because then
+      // it is not the one that was asked for.
+      spoken: (fellBackToHere ? `I could not find ${place}. In ${where.name}, ` : '') +
+        `${temp} and ${sky}. High ${high}, low ${low}.`,
       summary: `${place_}: ${temp}${symbol}, ${sky}${feelsShown}.\n` +
         `Today: high ${high}${symbol}, low ${low}${symbol}` +
         (rain != null ? `, ${rain}% chance of rain.` : '.'),
@@ -142,9 +145,9 @@ async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs =
   return {
     ok: true,
     place: place_,
-    spoken: (fellBackToHere ? `I could not find ${place}, so here is ${where.name}. ` : '') +
-      `${label} in ${where.name}: ${sky}, high of ${high}, low of ${low}` +
-      (rain != null && rain >= 30 ? `, ${rain} percent chance of rain.` : '.'),
+    spoken: (fellBackToHere ? `I could not find ${place}. In ${where.name}, ` : '') +
+      `${label}: ${sky}, high ${high}, low ${low}` +
+      (rain != null && rain >= 50 ? `, ${rain} percent rain.` : '.'),
     summary: `${place_} — ${label.toLowerCase()}: ${sky}, high ${high}${symbol}, low ${low}${symbol}` +
       (rain != null ? `, ${rain}% chance of rain.` : '.'),
     found: [{

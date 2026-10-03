@@ -135,10 +135,10 @@ const googleTools = (ctx) => [
         sections.push(`CALENDAR\n${events.summary}`);
         cards.push(...list);
         if (list.length) {
-          counts.push(`${list.length} thing${list.length === 1 ? '' : 's'} on your calendar`);
+          counts.push(`${list.length} on your calendar`);
           // The first thing is said separately: it is the one piece of detail
           // worth hearing rather than reading.
-          headline = `First up, ${list[0].title}${list[0].subtitle ? ` at ${String(list[0].subtitle).split(' · ')[0]}` : ''}.`;
+          headline = `First, ${list[0].title}${list[0].subtitle ? ` at ${String(list[0].subtitle).split(' · ')[0]}` : ''}.`;
         } else {
           counts.push('nothing on your calendar');
         }
@@ -148,9 +148,7 @@ const googleTools = (ctx) => [
         const outstanding = work.found || [];
         sections.push(`DUE\n${work.summary}`);
         cards.push(...outstanding);
-        counts.push(outstanding.length
-          ? `${outstanding.length} assignment${outstanding.length === 1 ? '' : 's'} due`
-          : 'nothing due');
+        counts.push(outstanding.length ? `${outstanding.length} due` : 'nothing due');
       }
 
       if (mail && mail.ok) {
@@ -158,7 +156,7 @@ const googleTools = (ctx) => [
         if (unread.length) {
           sections.push(`UNREAD\n${mail.summary}`);
           cards.push(...unread.slice(0, 3));
-          counts.push(`${unread.length} unread email${unread.length === 1 ? '' : 's'}`);
+          counts.push(`${unread.length} unread`);
         } else {
           counts.push('no unread email');
         }
@@ -176,7 +174,7 @@ const googleTools = (ctx) => [
       const list = counts.length > 1
         ? `${counts.slice(0, -1).join(', ')} and ${counts[counts.length - 1]}`
         : counts[0] || '';
-      const spoken = [list ? `You have ${list}.` : 'Your day looks clear.', headline].filter(Boolean).join(' ');
+      const spoken = [list ? `${list}.` : 'Your day looks clear.', headline].filter(Boolean).join(' ');
 
       return { ok: true, summary: sections.join('\n\n'), spoken, found: cards.slice(0, 8) };
     }
@@ -204,7 +202,7 @@ const googleTools = (ctx) => [
       const newest = messages[0];
       const spoken = messages.length === 1
         ? `One message, from ${senderName(header(newest, 'From'))}.`
-        : `You have ${messages.length} messages. The latest is from ${senderName(header(newest, 'From'))}.`;
+        : `${messages.length} messages, latest from ${senderName(header(newest, 'From'))}.`;
 
       return {
         ok: true,
@@ -305,8 +303,8 @@ const googleTools = (ctx) => [
       };
 
       const spoken = events.length === 1
-        ? `One event: ${events[0].summary || 'untitled'} at ${when(events[0])}.`
-        : `${events.length} events. First is ${events[0].summary || 'untitled'} at ${when(events[0])}.`;
+        ? `${events[0].summary || 'One event'} at ${when(events[0])}.`
+        : `${events.length} events. First, ${events[0].summary || 'untitled'} at ${when(events[0])}.`;
 
       return {
         ok: true,
@@ -467,7 +465,7 @@ const googleTools = (ctx) => [
         ok: true,
         summary: lines.join('\n'),
         spoken: active.length === 1
-          ? `You are on ${overall} percent, ${totalGot} out of ${totalPossible}.`
+          ? `You're on ${overall} percent.`
           : `Overall ${overall} percent across ${active.length} classes.`,
         found: cards
       };
@@ -540,7 +538,7 @@ const googleTools = (ctx) => [
         return {
           ok: true,
           summary: detail,
-          spoken: total ? `Nothing outstanding — all ${total} are turned in.` : 'There are no assignments posted.'
+          spoken: total ? `Nothing due. All ${total} turned in.` : 'No assignments posted.'
         };
       }
 
