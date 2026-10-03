@@ -305,10 +305,13 @@ const personalTools = (ctx) => [
       // model handed search results about it will invent an answer that looks
       // right. Saying what is missing is more use than that.
       const named = app ? app.replace(/^\w/, (ch) => ch.toUpperCase()) : null;
+      // status() returns { providers, accounts, appDefaults }. Reading it as a
+      // flat map meant this never named a single connected account, so the
+      // reply was always the less useful half of what it could say.
       const status = ctx.connections && ctx.connections.status ? ctx.connections.status() : {};
-      const connected = Object.entries(status)
-        .filter(([, v]) => v && v.connected)
-        .map(([k]) => k);
+      const connected = Object.values((status && status.providers) || {})
+        .filter((p) => p && p.connected)
+        .map((p) => p.name);
 
       const detail = named
         ? `${named} is not connected, so I cannot see your ${topic}.`

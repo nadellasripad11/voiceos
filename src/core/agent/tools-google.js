@@ -532,10 +532,13 @@ const googleTools = (ctx) => [
       if (!outstanding.length) {
         // Saying only "nothing due" left the user unable to tell whether it had
         // looked, so what it did find is reported too.
-        const detail = total
+        // Named here too: "nothing due" is exactly the answer someone would
+        // act on, and acting on the wrong system's nothing is how a missed
+        // deadline happens.
+        const detail = 'Google Classroom\n' + (total
           ? `Nothing outstanding. All ${total} assignment${total === 1 ? '' : 's'} ` +
             `in ${active.map((c) => c.name).join(', ')} ${total === 1 ? 'is' : 'are'} turned in.`
-          : `No assignments in ${active.map((c) => c.name).join(', ')}.`;
+          : `No assignments in ${active.map((c) => c.name).join(', ')}.`);
         return {
           ok: true,
           summary: detail,
