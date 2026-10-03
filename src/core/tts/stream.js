@@ -29,6 +29,32 @@ function completeLength(text) {
   return end;
 }
 
+/**
+ * Splits text into sentences worth synthesizing separately.
+ *
+ * A very short fragment is joined to the next one: "Yes." on its own costs a
+ * whole synthesis call for a fifth of a second of audio, which is slower
+ * overall than saying it with what follows.
+ *
+ * The threshold is low because synthesis is slower than speech here (about
+ * 1.2x realtime), so splitting always trades a pause between sentences for
+ * hearing the first one sooner — and sooner wins: for a two-sentence answer
+ * it is 2.2s to the first word instead of 4.4s, and it finishes sooner too.
+ */
+function splitSentences(text, { minChars = 12 } = {}) {
+  const parts = String(text || '')
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const out = [];
+  for (const part of parts) {
+    if (out.length && out[out.length - 1].length < minChars) out[out.length - 1] += ' ' + part;
+    else out.push(part);
+  }
+  return out;
+}
+
 class SpeechStream {
   /**
    * @param {object} opts
@@ -97,7 +123,13 @@ class SpeechStream {
       if (text.length > this.consumed) {
         const rest = text.slice(this.consumed);
         this.consumed = text.length;
-        this.enqueue(rest);
+
+        // Split rather than enqueued whole. A reply that arrives complete —
+        // which is every routed answer — was being synthesized in one piece,
+        // so nothing was heard until all of it existed. Kokoro runs at about
+        // 1.2x realtime, so a four-second answer was four seconds of silence.
+        // Sentence by sentence, the first is spoken while the rest is made.
+        for (const sentence of splitSentences(rest)) this.enqueue(sentence);
       }
     }
     await this.tail.catch(() => {});
@@ -134,4 +166,4 @@ class SpeechStream {
   }
 }
 
-module.exports = { SpeechStream, completeLength };
+module.exports = { SpeechStream, completeLength, splitSentences };

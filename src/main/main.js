@@ -1805,8 +1805,19 @@ async function runAgent(question, { signal, source = 'voice' } = {}) {
     // again would read the whole thing twice.
     const alreadySpoken = partialSeen && stream && !result.spoken;
     if (!alreadySpoken) {
-      if (stream) stream.cancel();
-      speak(result.spoken || result.answer, { turn });
+      const line = result.spoken || result.answer;
+      if (stream && line) {
+        // Routed answers arrive complete, and synthesizing the whole thing
+        // before making a sound meant waiting for all of it: Kokoro runs at
+        // about 1.2x realtime, so a four-second answer is four seconds of
+        // silence. Fed through the stream instead, the first sentence is
+        // spoken while the second is still being made — and both overlap the
+        // opening line, which is pre-rendered and already playing.
+        stream.finish(line).catch((err) => logger.debug(`[tts] ${err.message}`));
+      } else {
+        if (stream) stream.cancel();
+        speak(line, { turn });
+      }
     }
 
     if (services.transcripts) {

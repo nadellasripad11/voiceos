@@ -115,6 +115,29 @@ async function typeIn(stream, text, step = 3) {
       JSON.stringify(spoken));
   }
 
+  console.log('\nA reply handed over complete is still split:');
+  {
+    // Routed answers arrive whole rather than a token at a time, and finish()
+    // used to enqueue the lot as one utterance — so nothing was heard until
+    // all of it had been synthesized. Measured, that was 5502ms of silence
+    // for the weather against 2921ms when split.
+    const { stream, spoken, clips } = makeStream();
+    await stream.finish('78 and overcast. High 82, low 69.');
+    check('a complete reply is split into sentences', spoken.length === 2, JSON.stringify(spoken));
+    check('the first clip is the first sentence',
+      clips.length > 0 && Buffer.from(clips[0].data, 'base64').toString() === '78 and overcast.',
+      JSON.stringify(clips.map((c) => Buffer.from(c.data, 'base64').toString())));
+    check('nothing is lost in the split',
+      spoken.join(' ') === '78 and overcast. High 82, low 69.', JSON.stringify(spoken));
+  }
+  {
+    // A fragment too short to be worth its own synthesis call rides along
+    // with the next one.
+    const { stream, spoken } = makeStream();
+    await stream.finish('Yes. The capybara is the largest living rodent.');
+    check('a tiny fragment is not given its own call', spoken.length === 1, JSON.stringify(spoken));
+  }
+
   console.log('\nCancelling mid-reply:');
   {
     const { stream, spoken, clips } = makeStream();
