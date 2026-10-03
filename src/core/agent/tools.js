@@ -4,7 +4,13 @@
  *
  * Each tool pairs a JSON schema the model can call with an executor that does
  * the real work through the native bridge, the browser controller, or the
- * filesystem. Tools declare `mutating: true` when they send, create, change or
+ * filesystem. `mutating: true` means a mistake would reach other people or
+ * could not be undone — sending mail, adding to a shared calendar — and only
+ * those ask before running. Opening an app or a page, changing the volume or
+ * writing a note to yourself is reversible and was just asked for out loud, so
+ * asking again is friction with nothing behind it.
+ *
+ * Tools declare `mutating: true` when they send, create, change or
  * delete; the agent must get the user's approval before running those.
  *
  * Only tools whose app is enabled and whose platform matches are exposed, so
@@ -14,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { paths } = require('../paths');
+const { answerFromWeb, getWeather } = require('./web');
 const { googleTools } = require('./tools-google');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31,8 +38,6 @@ const systemTools = (ctx) => [
     appId: 'system',
     description: 'Open an application on this computer by name, for example Spotify, Chrome, Notepad.',
     parameters: obj({ name: str('The application name') }, ['name']),
-    mutating: true,
-    confirm: (args) => ({ title: `Open ${args.name}?`, detail: 'Launches the application.' }),
     run: async ({ name }) => {
       const r = await ctx.bridge.openApp(name);
       return { ok: true, summary: `Opened ${r.name || name}.`, found: [{ glyph: '🖥️', title: name, subtitle: 'Launched' }] };
@@ -43,8 +48,7 @@ const systemTools = (ctx) => [
     appId: 'system',
     description: 'Open a web page in the default browser.',
     parameters: obj({ url: str('The full URL to open') }, ['url']),
-    mutating: true,
-    confirm: (args) => ({ title: 'Open this page?', detail: args.url }),
+
     run: async ({ url }) => {
       const safe = /^https?:\/\//i.test(url) ? url : `https://${url}`;
       await ctx.bridge.openUrl(safe);
@@ -157,7 +161,6 @@ ${context.text.slice(0, 2500)}`);
     description: 'Turn the system volume up, down, or mute it.',
     parameters: obj({ direction: { type: 'string', enum: ['up', 'down', 'mute'], description: 'Which way to change the volume' },
                       steps: num('How many steps, default 4') }),
-    mutating: true,
     autoConfirm: true,
     run: async ({ direction, steps = 4 }) => {
       const key = { up: 'volume_up', down: 'volume_down', mute: 'volume_mute' }[direction] || 'volume_up';
@@ -211,6 +214,30 @@ async function readCursorContext(ctx, { radiusX = 620, radiusY = 380 } = {}) {
 
   return out;
 }
+
+const weatherTools = (ctx) => [
+  {
+    name: 'weather',
+    appId: 'web-search',
+    description: 'The weather or forecast, here or in a named place. Use for anything about temperature, rain or sun.',
+    parameters: obj({
+      place: str('A city or place name. Leave empty for where the user is.'),
+      when: str('now, today or tomorrow')
+    }),
+    run: async ({ place, when } = {}) => {
+      try {
+        return await getWeather({
+          place: place || null,
+          when: /tomorrow/i.test(when || '') ? 'tomorrow' : (/today/i.test(when || '') ? 'today' : 'now'),
+          units: ctx.config.get('units.temperature', 'F')
+        });
+      } catch (err) {
+        ctx.logger.warn?.(`[weather] ${err.message}`);
+        return { ok: false, summary: `I could not reach the weather service: ${err.message}` };
+      }
+    }
+  }
+];
 
 // --- Small talk -----------------------------------------------------------
 
@@ -289,7 +316,6 @@ const mediaTools = (ctx) => [
       action: { type: 'string', enum: ['play', 'pause', 'toggle', 'next', 'previous'], description: 'What to do' },
       app: str('Optional player name, e.g. Spotify')
     }, ['action']),
-    mutating: true,
     autoConfirm: true,
     run: async ({ action, app }) => {
       const r = await ctx.bridge.mediaControl(action, { app });
@@ -328,23 +354,13 @@ const webTools = (ctx) => [
     appId: 'web-search',
     description: 'Look up a direct factual answer, such as a definition, a conversion, or who someone is.',
     parameters: obj({ query: str('The question to look up') }, ['query']),
-    run: async ({ query }) => {
-      const instant = await duckDuckGoInstant(query);
-      if (instant) {
-        return {
-          ok: true,
-          summary: instant.text,
-          found: [{ glyph: '📘', title: instant.heading || query, subtitle: instant.source || 'DuckDuckGo' }]
-        };
-      }
-      const results = await duckDuckGo(query);
-      if (!results.length) return { ok: true, summary: `I could not find an answer for "${query}".` };
-      return {
-        ok: true,
-        summary: results[0].snippet || results[0].title,
-        found: results.slice(0, 3).map((r) => ({ glyph: '🔍', title: r.title, subtitle: r.url }))
-      };
-    }
+    run: async ({ query }, { signal } = {}) => answerFromWeb({
+      query,
+      provider: ctx.provider,
+      model: ctx.config.get('llm.model'),
+      logger: ctx.logger,
+      signal
+    })
   },
   {
     name: 'fetch_page',
@@ -478,8 +494,6 @@ const fileTools = (ctx) => [
     appId: 'files',
     description: 'Open a file in its default application.',
     parameters: obj({ filePath: str('Full path to the file') }, ['filePath']),
-    mutating: true,
-    confirm: (args) => ({ title: 'Open this file?', detail: args.filePath }),
     run: async ({ filePath }) => {
       if (!insideAllowedRoot(ctx, filePath)) {
         return { ok: false, summary: 'That file is outside the folders I am allowed to open.' };
@@ -521,7 +535,6 @@ const noteTools = (ctx) => [
     appId: 'notes',
     description: 'Save a note for the user.',
     parameters: obj({ text: str('The note content'), title: str('Optional title') }, ['text']),
-    mutating: true,
     autoConfirm: true,
     run: async ({ text, title }) => {
       const dir = path.join(paths.userData, 'notes');
@@ -537,7 +550,6 @@ const noteTools = (ctx) => [
     appId: 'todo',
     description: 'Remind the user about something at a given time.',
     parameters: obj({ text: str('What to be reminded about'), when: str('When, e.g. "in 20 minutes" or "tomorrow 9am"') }, ['text']),
-    mutating: true,
     autoConfirm: true,
     run: async ({ text, when }) => {
       const at = parseWhen(when);
@@ -626,6 +638,7 @@ const OPENINGS = {
   search_drive: 'Searching your Drive.',
   search_web: 'Searching the web.',
   answer_from_web: 'Looking that up.',
+  weather: 'Checking the forecast.',
   fetch_page: 'Reading that page.',
   search_files: 'Looking through your files.',
   read_screen: 'Reading your screen.',
@@ -666,6 +679,7 @@ function buildTools(ctx) {
   const all = [
     ...systemTools(ctx),
     ...smallTalkTools(),
+    ...weatherTools(ctx),
     // Only offered when a connection manager is present to resolve tokens.
     ...(ctx.connections ? googleTools(ctx) : []),
     ...mediaTools(ctx),

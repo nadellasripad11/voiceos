@@ -52,6 +52,8 @@ class Agent {
       browser: this.browser,
       config: this.config,
       connections: this.connections,
+      // Tools that have to turn a page of text into a sentence need the model.
+      provider: this.provider,
       logger: this.logger
     };
   }
@@ -65,7 +67,7 @@ class Agent {
     const tools = buildTools(this.ctx);
 
     // 1. Deterministic route.
-    const routed = matchIntent(question, tools);
+    const routed = matchIntent(question, tools, this.config);
     if (routed) {
       onStage('thinking');
       this.logger.info?.(`[agent] routed "${question}" -> ${routed.tool.name}`);

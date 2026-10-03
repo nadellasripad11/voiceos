@@ -1470,9 +1470,20 @@ function pauseWarm() {
   }
 }
 
-/** Picks the warm-up back up once nothing is in flight. */
+/**
+ * How many requests are being answered right now.
+ *
+ * A session stops *listening* long before the answer exists — transcription,
+ * routing, tools and the model all come after. Resuming the warm-up when the
+ * session reset meant 40 seconds of prompt evaluation ran against the very
+ * query it was supposed to be making faster, and the user got no answer at all.
+ */
+let agentBusy = 0;
+
+/** Picks the warm-up back up once nothing is actually in flight. */
 function resumeWarm() {
   if (warmDone) return;
+  if (agentBusy > 0 || session.phase !== PHASE.IDLE) return;
   warmBrain({ delayMs: 4000 });
 }
 
@@ -1494,6 +1505,10 @@ function speechEnabled() {
  */
 async function runAgent(question, { signal, source = 'voice' } = {}) {
   const turn = ++speechTurn;
+  const started = Date.now();
+  // Answering is the work; the warm-up must not run against it.
+  agentBusy++;
+  pauseWarm();
   broadcast('agent-result', { question, answer: '', found: [], pending: true });
 
   const stream = speechEnabled()
@@ -1508,45 +1523,64 @@ async function runAgent(question, { signal, source = 'voice' } = {}) {
 
   let partialSeen = false;
 
-  const result = await services.agent.run(question, {
-    signal,
-    onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
-    // Spoken while the tool is still running, not after it.
-    onOpening: (line) => speak(line, { opening: true, turn }),
-    onPartial: (text, { done, retracted } = {}) => {
-      if (retracted) {
-        // The model asked for a tool after all; what it wrote was preamble.
-        // The stream has to forget it, or the real answer would be read from
-        // the wrong offset.
-        if (stream) stream.reset();
-        broadcast('agent-partial', { turn, text: '', retracted: true });
-        return;
+  try {
+    const result = await services.agent.run(question, {
+      signal,
+      onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
+      // Spoken while the tool is still running, not after it.
+      onOpening: (line) => speak(line, { opening: true, turn }),
+      onPartial: (text, { done, retracted } = {}) => {
+        if (retracted) {
+          // The model asked for a tool after all; what it wrote was preamble.
+          // The stream has to forget it, or the real answer would be read from
+          // the wrong offset.
+          if (stream) stream.reset();
+          broadcast('agent-partial', { turn, text: '', retracted: true });
+          return;
+        }
+        partialSeen = true;
+        broadcast('agent-partial', { turn, text, done: Boolean(done) });
+        if (stream) {
+          if (done) stream.finish(text).catch(() => {});
+          else stream.push(text);
+        }
       }
-      partialSeen = true;
-      broadcast('agent-partial', { turn, text, done: Boolean(done) });
-      if (stream) {
-        if (done) stream.finish(text).catch(() => {});
-        else stream.push(text);
-      }
+    });
+
+    broadcast('agent-result', result);
+
+    // Logged so a question that produced nothing is distinguishable from one
+    // that was never processed. Before this, the only trace of a failed request
+    // was the transcript going in and silence coming out.
+    logger.info(
+      `[agent] answered via ${result.model || 'nothing'} in ${Date.now() - started}ms` +
+      `${result.answer ? ` (${result.answer.length} chars)` : ' — NO ANSWER'}` +
+      `${result.needsBrain ? ' [no model available]' : ''}` +
+      `${result.exhausted ? ' [ran out of tool steps]' : ''}`
+    );
+
+    // A streamed reply has already been spoken sentence by sentence; saying it
+    // again would read the whole thing twice.
+    const alreadySpoken = partialSeen && stream && !result.spoken;
+    if (!alreadySpoken) {
+      if (stream) stream.cancel();
+      speak(result.spoken || result.answer, { turn });
     }
-  });
 
-  broadcast('agent-result', result);
-
-  // A streamed reply has already been spoken sentence by sentence; saying it
-  // again would read the whole thing twice.
-  const alreadySpoken = partialSeen && stream && !result.spoken;
-  if (!alreadySpoken) {
-    if (stream) stream.cancel();
-    speak(result.spoken || result.answer, { turn });
+    if (services.transcripts) {
+      services.transcripts.append({
+        mode: 'agent', text: result.answer, raw: question, ms: result.ms, source
+      }).catch(() => {});
+    }
+    return result;
+  } catch (err) {
+    logger.error(`[agent] "${question}" failed after ${Date.now() - started}ms: ${err.message}`);
+    throw err;
+  } finally {
+    agentBusy--;
+    // Only now is the machine genuinely idle.
+    resumeWarm();
   }
-
-  if (services.transcripts) {
-    services.transcripts.append({
-      mode: 'agent', text: result.answer, raw: question, ms: result.ms, source
-    }).catch(() => {});
-  }
-  return result;
 }
 
 async function speak(text, { force = false, opening = false, turn = speechTurn } = {}) {

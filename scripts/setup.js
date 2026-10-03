@@ -75,9 +75,14 @@ const PIPER_BIN = {
 };
 const PIPER_VOICE_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/';
 const PIPER_VOICES = {
+  // "high" is a genuinely different model size, not a label: it is the
+  // difference between a voice that sounds synthesised and one that does not.
+  'en_US-lessac-high':  { p: 'en/en_US/lessac/high/en_US-lessac-high',   mb: 114 },
   'en_US-amy-medium':   { p: 'en/en_US/amy/medium/en_US-amy-medium',     mb: 63 },
   'en_US-ryan-high':    { p: 'en/en_US/ryan/high/en_US-ryan-high',       mb: 114 },
-  'en_GB-alba-medium':  { p: 'en/en_GB/alba/medium/en_GB-alba-medium',   mb: 63 }
+  'en_GB-jenny_dioco-medium': { p: 'en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium', mb: 63 },
+  'en_GB-alba-medium':  { p: 'en/en_GB/alba/medium/en_GB-alba-medium',   mb: 63 },
+  'en_GB-alan-medium':  { p: 'en/en_GB/alan/medium/en_GB-alan-medium',   mb: 63 }
 };
 
 // --- Helpers --------------------------------------------------------------

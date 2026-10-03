@@ -60,11 +60,13 @@ function listVoices() {
  * Jarvis is the British butler delivery, which is what people ask for by name.
  */
 const VOICES = {
-  jarvis:   { id: 'en_GB-alan-medium',    label: 'Jarvis',   description: 'British, measured, butler delivery' },
-  midnight: { id: 'en_GB-northern_english_male-medium', label: 'Midnight', description: 'British, warmer and lower' },
-  sky:      { id: 'en_US-amy-medium',     label: 'Sky',      description: 'American, bright and clear' },
-  dawn:     { id: 'en_US-lessac-medium',  label: 'Dawn',     description: 'American, even and calm' },
-  dusk:     { id: 'en_US-ryan-high',      label: 'Dusk',     description: 'American male, low and steady' }
+  // "high" is a larger model, not a label, and the difference is audible: it is
+  // the gap between a voice that sounds synthesised and one that does not.
+  aria:     { id: 'en_US-lessac-high',    label: 'Aria',     description: 'Female, American, warm and clear — the best quality here' },
+  sky:      { id: 'en_US-amy-medium',     label: 'Sky',      description: 'Female, American, bright and light' },
+  jenny:    { id: 'en_GB-jenny_dioco-medium', label: 'Jenny', description: 'Female, British, soft and even' },
+  jarvis:   { id: 'en_GB-alan-medium',    label: 'Jarvis',   description: 'Male, British, measured butler delivery' },
+  dusk:     { id: 'en_US-ryan-high',      label: 'Dusk',     description: 'Male, American, low and steady' }
 };
 
 /** Accepts either a friendly name ('jarvis') or a raw Piper voice id. */

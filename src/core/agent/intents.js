@@ -11,6 +11,55 @@
  * ones, and the open-ended web lookup is last.
  */
 
+/**
+ * Sites worth opening by name.
+ *
+ * Canvas is deliberately the generic entry point: every school runs its own
+ * instance, so the right address is a per-user setting rather than something
+ * guessable. Override any of these, or add your own, under ui.sites.
+ */
+const SITES = {
+  canvas: 'https://canvas.instructure.com',
+  classroom: 'https://classroom.google.com',
+  'google classroom': 'https://classroom.google.com',
+  gmail: 'https://mail.google.com',
+  mail: 'https://mail.google.com',
+  email: 'https://mail.google.com',
+  inbox: 'https://mail.google.com',
+  drive: 'https://drive.google.com',
+  'google drive': 'https://drive.google.com',
+  docs: 'https://docs.google.com',
+  'google docs': 'https://docs.google.com',
+  sheets: 'https://sheets.google.com',
+  slides: 'https://slides.google.com',
+  calendar: 'https://calendar.google.com',
+  youtube: 'https://www.youtube.com',
+  google: 'https://www.google.com',
+  github: 'https://github.com',
+  whatsapp: 'https://web.whatsapp.com',
+  reddit: 'https://www.reddit.com',
+  wikipedia: 'https://www.wikipedia.org',
+  chatgpt: 'https://chat.openai.com',
+  claude: 'https://claude.ai',
+  notion: 'https://www.notion.so',
+  twitter: 'https://x.com',
+  x: 'https://x.com',
+  instagram: 'https://www.instagram.com',
+  netflix: 'https://www.netflix.com',
+  amazon: 'https://www.amazon.com',
+  'khan academy': 'https://www.khanacademy.org',
+  desmos: 'https://www.desmos.com/calculator'
+};
+
+/** The address for a spoken site name, or null. */
+function siteUrl(name, config) {
+  const key = String(name || '').trim().toLowerCase().replace(/[.?!]+$/, '');
+  if (!key) return null;
+  const overrides = (config && config.get && config.get('ui.sites', null)) || {};
+  const merged = { ...SITES, ...overrides };
+  return merged[key] || null;
+}
+
 /** Each entry: { re, tool, args?, guard? }. */
 const INTENTS = [
   // --- Point and ask ------------------------------------------------------
@@ -119,6 +168,15 @@ const INTENTS = [
   },
 
   // --- Apps and pages -----------------------------------------------------
+  // A site by name: "go to canvas", "open my email". Guarded on the name being
+  // one we know, so "open spotify" still reaches the desktop app and anything
+  // unrecognised falls through rather than being guessed at.
+  {
+    re: /^(?:open|go to|goto|visit|take me to|bring up|pull up|navigate to)\s+(?:my\s+|the\s+)?(.+?)[.?!]?$/i,
+    tool: 'open_url',
+    guard: (m, _text, config) => Boolean(siteUrl(m[1], config)),
+    args: (m, _text, config) => ({ url: siteUrl(m[1], config) })
+  },
   {
     re: /^(?:open|go to|visit)\s+(\S+\.(?:com|org|net|io|dev|edu|gov)\S*)/i,
     tool: 'open_url',
@@ -176,6 +234,23 @@ const INTENTS = [
     tool: 'search_web',
     args: (m) => ({ query: m[1].trim() })
   },
+  // --- Weather -------------------------------------------------------------
+  // One of the most common questions anyone asks, and the one most likely to
+  // be answered with an invented number, so it is routed deterministically to
+  // a forecast API and never reaches the model.
+  {
+    re: /\b(?:weather|forecast|temperature|how (?:hot|cold|warm)|is it (?:going to )?(?:rain|snow)|will it (?:rain|snow))\b/i,
+    tool: 'weather',
+    args: (_m, text) => {
+      const when = /\btomorrow\b/i.test(text) ? 'tomorrow'
+        : /\b(?:today|this afternoon|tonight|this evening)\b/i.test(text) ? 'today'
+        : 'now';
+      // "in Paris", "for London" — anything else is taken as here.
+      const place = (/\b(?:in|for|at)\s+([A-Z][\w.'-]*(?:[ -][A-Z][\w.'-]*){0,3})/.exec(text) || [])[1] || null;
+      return { place, when };
+    }
+  },
+
   // --- Small talk ----------------------------------------------------------
   // Must precede the open-ended web lookup below: "what's up?" starts with
   // "what", so without these it was being answered with a web search.
@@ -248,7 +323,7 @@ const INTENTS = [
  * @param {string} text what the user said
  * @param {Array<{name:string}>} tools the tools currently available
  */
-function matchIntent(text, tools) {
+function matchIntent(text, tools, config = null) {
   // Curly quotes and dashes are normalised first. Whisper emits both forms
   // depending on the sentence, and a pattern written with a straight
   // apostrophe would match one and silently miss the other.
@@ -263,12 +338,12 @@ function matchIntent(text, tools) {
   for (const intent of INTENTS) {
     const m = intent.re.exec(clean);
     if (!m) continue;
-    if (intent.guard && !intent.guard(m, clean)) continue;
+    if (intent.guard && !intent.guard(m, clean, config)) continue;
     const tool = byName.get(intent.tool);
     if (!tool) continue; // the owning app is switched off
-    return { tool, args: intent.args ? intent.args(m, clean) : {} };
+    return { tool, args: intent.args ? intent.args(m, clean, config) : {} };
   }
   return null;
 }
 
-module.exports = { INTENTS, matchIntent };
+module.exports = { INTENTS, matchIntent , SITES, siteUrl };

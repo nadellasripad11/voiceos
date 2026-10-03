@@ -63,6 +63,11 @@ const DEFAULTS = {
   tts: {
     enabled: true,
     engine: 'piper',              // 'piper' | 'system' | 'off'
+    // Sky: female, and 4.4x quicker to synthesize than the "high" model
+    // (445ms a sentence against 1977ms, which is 0.87x realtime — barely
+    // faster than speaking it). Aria sounds better; set tts.voice to
+    // 'en_US-lessac-high' for it and accept about a second more before each
+    // reply starts.
     voice: 'en_US-amy-medium',
     speed: 1.0,
     speakAgentReplies: true,
