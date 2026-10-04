@@ -20,6 +20,7 @@ const { paths, ensureDirs } = require('../core/paths');
 const { getBridge } = require('../core/native/bridge');
 const { WhisperEngine } = require('../core/stt/whisper');
 const { createProvider } = require('../core/llm/provider');
+const { FallbackProvider } = require('../core/llm/fallback');
 const { TranscriptStore } = require('../core/memory/transcripts');
 const { DictationMode } = require('../core/modes/dictation');
 const { EditMode, classify } = require('../core/modes/edit');
@@ -145,11 +146,26 @@ function buildStt(modelOverride = null) {
 function buildProvider() {
   const cfg = config.all();
   const credentials = readCredentials();
-  return createProvider(cfg.llm.provider, {
-    baseUrl: cfg.llm.baseUrl,
+  const one = (name) => createProvider(name, {
+    baseUrl: name === 'ollama' ? cfg.llm.baseUrl : undefined,
     keepAlive: cfg.llm.keepAlive,
     numCtx: cfg.llm.numCtx,
-    apiKey: credentials[cfg.llm.provider] || '',
+    apiKey: credentials[name] || '',
+    logger
+  });
+
+  const primary = one(cfg.llm.provider);
+  const fallback = cfg.llm.fallbackProvider;
+
+  // Only worth pairing when they are actually different: a provider behind
+  // itself is two attempts at the same failure.
+  if (!fallback || fallback === cfg.llm.provider) return primary;
+
+  logger.info(`[llm] ${cfg.llm.provider} first, ${fallback} behind it`);
+  return new FallbackProvider({
+    primary,
+    secondary: one(fallback),
+    secondaryModel: cfg.llm.fallbackModel || null,
     logger
   });
 }

@@ -180,7 +180,19 @@ class Agent {
       // turn's text is a fresh answer, not a continuation of this one.
       let streamed = '';
       const stream = onPartial && this.provider.streams
-        ? (chunk, full) => { streamed = full; onPartial(full, { done: false }); }
+        ? (chunk, full, meta) => {
+          // A fallback provider says restart when the first brain failed
+          // part-way through: what was already shown and spoken belongs to an
+          // answer that is not coming, so it is retracted rather than having
+          // the second one continue someone else's sentence.
+          if (meta && meta.restart) {
+            streamed = '';
+            onPartial('', { done: false, retracted: true });
+            return;
+          }
+          streamed = full;
+          onPartial(full, { done: false });
+        }
         : undefined;
 
       const res = await this.provider.chat({

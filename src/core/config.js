@@ -55,6 +55,14 @@ const DEFAULTS = {
 
   llm: {
     provider: 'ollama',
+
+    // A hosted provider is quick but needs the internet and has a free-tier
+    // limit; the local one is slow but always here. Setting provider to
+    // 'groq' and leaving this as 'ollama' uses the quick one and keeps the
+    // local one for when it cannot answer — so adding a key removes nothing.
+    // Set to null to use only the provider above.
+    fallbackProvider: 'ollama',
+    fallbackModel: 'qwen2.5:1.5b-instruct',
     baseUrl: 'http://127.0.0.1:11434',
     // Small by default so this laptop stays responsive.
     model: 'qwen2.5:3b-instruct',
