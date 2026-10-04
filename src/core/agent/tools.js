@@ -876,7 +876,11 @@ function buildTools(ctx) {
     ...mediaTools(ctx),
     ...webTools(ctx),
     ...fileTools(ctx),
-    ...noteTools(ctx)
+    ...noteTools(ctx),
+    // Whatever MCP servers are configured, as ordinary tools. They arrive
+    // already marked mutating unless their server said read-only, so they go
+    // through the same confirmation as anything else that changes something.
+    ...(ctx.mcp ? ctx.mcp.toolDefinitions() : [])
   ];
 
   const apps = ctx.config.get('apps', {});

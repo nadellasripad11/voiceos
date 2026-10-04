@@ -30,6 +30,7 @@ const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { SpeechStream } = require('../core/tts/stream');
 const { KokoroTts } = require('../core/tts/kokoro');
 const { WakeDetector } = require('../core/wake/detector');
+const { McpManager } = require('../core/mcp/manager');
 const { getBrowser } = require('../core/browser/cdp');
 const { ConnectionManager } = require('../core/connect/manager');
 const { createLogger } = require('./logger');
@@ -208,6 +209,8 @@ async function initServices() {
     profile: config.get('browser.profile', 'voiceos'),
     headless: config.get('browser.headless', false)
   });
+  services.mcp = new McpManager({ config, logger });
+
   services.connections = new ConnectionManager({
     config,
     bridge: services.bridge,
@@ -223,6 +226,7 @@ async function initServices() {
     browser: services.browser,
     tts: services.tts,
     connections: services.connections,
+    mcp: services.mcp,
     logger,
     requestConfirmation
   });
@@ -263,7 +267,14 @@ async function initServices() {
   // from 1.7s to 18.8s and the PowerShell bridge missed its 30s startup
   // deadline outright, which would have left dictation unable to type
   // anything. Everything the user can actually touch comes first.
-  Promise.all([bridgeReady, ttsReady]).then(() => { startWakeWord(); warmBrain(); warmPlayer(); });
+  Promise.all([bridgeReady, ttsReady]).then(() => {
+    startWakeWord();
+    warmBrain();
+    warmPlayer();
+    // Last, because each is someone else's process: a slow or broken server
+    // must cost its own tools and nothing that was already working.
+    services.mcp.start().catch((err) => logger.warn(`[mcp] ${err.message}`));
+  });
 
   services.transcripts.prune()
     .then((r) => r.removed && logger.info(`pruned ${r.removed} expired transcript file(s)`))
@@ -293,6 +304,7 @@ function reloadServices() {
     // silently drops every connected-account tool, so after any settings
     // change "check my email" would fall back to a web search about email.
     connections: services.connections,
+    mcp: services.mcp,
     logger,
     requestConfirmation
   });

@@ -169,6 +169,23 @@ const DEFAULTS = {
     maxTurns: 12
   },
 
+  // Model Context Protocol: other people's tools, running here.
+  //
+  // A server is an ordinary process speaking JSON-RPC on its own stdin and
+  // stdout, so adding one costs a line here and nothing else — no account, no
+  // quota, no middleman holding the credentials. This is the open equivalent
+  // of a hosted connector service, and the reason to prefer it: the tokens and
+  // the servers stay on this machine.
+  //
+  // Examples, all free:
+  //   { name: 'files',  command: 'npx', args: ['-y','@modelcontextprotocol/server-filesystem','C:/Users/you/Documents'] }
+  //   { name: 'github', command: 'npx', args: ['-y','@modelcontextprotocol/server-github'], env: { GITHUB_TOKEN: '...' } }
+  //   { name: 'memory', command: 'npx', args: ['-y','@modelcontextprotocol/server-memory'] }
+  mcp: {
+    enabled: true,
+    servers: []
+  },
+
   ui: {
     // Show the words as they are spoken, in place of the level meter, and
     // hand the finished transcript back for correction before it is acted on.

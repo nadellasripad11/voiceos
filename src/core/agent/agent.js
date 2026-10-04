@@ -31,12 +31,15 @@ Rules:
 - Do not describe the tools or your reasoning. Just answer.`;
 
 class Agent {
-  constructor({ provider, config, bridge, browser, tts, connections, logger = console, requestConfirmation }) {
+  constructor({ provider, config, bridge, browser, tts, connections, mcp = null, logger = console, requestConfirmation }) {
     this.provider = provider;
     this.config = config;
     this.bridge = bridge;
     this.browser = browser;
     this.connections = connections;
+    // Whatever MCP servers are configured, if any; their tools join the
+    // registry alongside the built-in ones.
+    this.mcp = mcp;
     this.tts = tts;
     this.logger = logger;
     this.requestConfirmation = requestConfirmation;
@@ -54,6 +57,7 @@ class Agent {
       connections: this.connections,
       // Tools that have to turn a page of text into a sentence need the model.
       provider: this.provider,
+      mcp: this.mcp,
       logger: this.logger
     };
   }

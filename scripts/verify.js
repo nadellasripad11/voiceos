@@ -223,6 +223,24 @@ async function exercise(area, name, fn, judge) {
         ? true : 'it should say so and report no marks'));
   }
 
+  // --- MCP ----------------------------------------------------------------
+  console.log('\nMCP SERVERS');
+  {
+    const { McpManager } = require('../src/core/mcp/manager');
+    const mcp = new McpManager({ config, logger: quiet });
+    const entries = mcp.entries();
+    if (!entries.length) {
+      record('mcp', 'none configured (mcp.servers is empty)', 'info');
+    } else {
+      await exercise('mcp', `${entries.length} server(s) start`, () => mcp.start(),
+        (r) => (r.servers === entries.length ? true : `only ${r.servers} started`));
+      for (const s of mcp.status()) {
+        record('mcp', s.name, s.running ? 'ok' : 'no', s.running ? `${s.tools.length} tools` : s.error);
+      }
+      mcp.stop();
+    }
+  }
+
   // --- the brain ----------------------------------------------------------
   console.log('\nTHE MODEL');
   const llmUp = await provider.available().catch(() => false);
