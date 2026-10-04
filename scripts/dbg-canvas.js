@@ -1,0 +1,23 @@
+'use strict';
+const { buildTools } = require('../src/core/agent/tools');
+const { getBridge } = require('../src/core/native/bridge');
+const { getBrowser } = require('../src/core/browser/cdp');
+const { ConnectionManager } = require('../src/core/connect/manager');
+const { config } = require('../src/core/config');
+const { paths } = require('../src/core/paths');
+const fs = require('fs');
+const quiet = { info: (m)=>console.log(' ',m), warn: (m)=>console.log(' WARN',m), debug(){}, error(){} };
+(async () => {
+  const bridge = getBridge({ logger: { info(){},warn(){},debug(){},error(){} } });
+  await bridge.start();
+  const browser = getBrowser({ logger: quiet, profile: config.get('browser.profile','voiceos'), headless: false });
+  const creds = { read: () => { try { return JSON.parse(fs.readFileSync(paths.credentials,'utf8')); } catch { return {}; } }, write: ()=>{} };
+  const connections = new ConnectionManager({ config, bridge, browser, logger: quiet, credentials: creds });
+  const tools = buildTools({ config, bridge, connections, browser, provider: null, logger: quiet });
+  const t0 = Date.now();
+  const r = await tools.find(t => t.name === 'canvas_grades').run({});
+  console.log(`\n(${Date.now()-t0}ms)`);
+  console.log('SPOKEN:', r.spoken);
+  console.log('SHOWN :', r.summary);
+  bridge.stop(); process.exit(0);
+})().catch(e => { console.error('FATAL:', e.message); process.exit(1); });

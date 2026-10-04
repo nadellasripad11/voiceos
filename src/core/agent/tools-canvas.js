@@ -14,6 +14,8 @@
  * differs per school and is stored with the token.
  */
 
+const { readGrades, readAssignments } = require('./canvas-browser');
+
 const obj = (properties, required = []) => ({ type: 'object', properties, required });
 const num = (description) => ({ type: 'number', description });
 
@@ -84,6 +86,11 @@ const canvasTools = (ctx) => [
     description: "The user's grades in Canvas. Use when they say Canvas, or for grades when Canvas is connected.",
     parameters: obj({}),
     run: async () => {
+      // The browser is already logged in, and Canvas's own API accepts that
+      // session — so there is nothing to connect and nothing to paste. A
+      // pasted token is still honoured if one exists, but it is no longer
+      // the price of asking.
+      if (!(await isConnected(ctx)) && ctx.browser) return readGrades(ctx);
       if (!(await isConnected(ctx))) return notConnectedAnswer('grades');
 
       // Enrollments carry the score per course, so this is one request rather
@@ -139,6 +146,7 @@ const canvasTools = (ctx) => [
     description: 'Assignments, quizzes and tests due in Canvas.',
     parameters: obj({ limit: num('Max items, default 10') }),
     run: async ({ limit = 10 } = {}) => {
+      if (!(await isConnected(ctx)) && ctx.browser) return readAssignments(ctx, { limit });
       if (!(await isConnected(ctx))) return notConnectedAnswer('assignments');
 
       // The todo list is what Canvas itself shows the student as outstanding,
