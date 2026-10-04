@@ -191,6 +191,24 @@ const INTENTS = [
     args: () => ({})
   },
 
+  // --- Doing a piece of work ------------------------------------------------
+  // A goal rather than a question: something to produce, not something to look
+  // up. Before the school rules, so "do my homework" is work while "what
+  // homework do I have" is still a question — and before the web lookup, which
+  // would otherwise search for advice about doing it and report that as the
+  // answer. Both verbs are anchored at the start so "what do I have due" is
+  // not read as an instruction to do it.
+  {
+    re: /^(?:please\s+)?(?:write|draft|compose|create|generate|rewrite|outline|summari[sz]e)\s+(.{3,})$/i,
+    tool: 'do_task',
+    args: (_m, text) => ({ goal: text })
+  },
+  {
+    re: /^(?:please\s+)?(?:do|answer|finish|complete|solve)\s+(?:my|the|these|this|all)\s+(?:homework|assignment|assignments|essay|worksheet|questions|problems|quiz)\b/i,
+    tool: 'do_task',
+    args: (_m, text) => ({ goal: text })
+  },
+
   // --- Mail, calendar and school -------------------------------------------
   {
     re: /\b(?:check|read|any|new|got|show|what'?s? in)\b.*\b(?:e?mails?|inbox)\b/i,

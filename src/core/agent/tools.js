@@ -23,6 +23,7 @@ const { paths } = require('../paths');
 const { answerFromWeb, getWeather } = require('./web');
 const { pictureFor, imageSubject } = require('./images');
 const { playOnWeb } = require('../music/spotify-web');
+const { runTask } = require('./task');
 const { canvasTools } = require('./tools-canvas');
 const { googleTools } = require('./tools-google');
 
@@ -265,6 +266,45 @@ const musicSearchTools = (ctx) => [
         ok: true,
         summary: `I opened Spotify on "${term}" — press play on the one you want.`,
         spoken: `I found ${term} on Spotify.`
+      };
+    }
+  }
+];
+
+const taskTools = (ctx) => [
+  {
+    name: 'do_task',
+    appId: 'system',
+    description: 'Do a piece of work: write something, answer assignment questions, summarise a page. Saves the result to a file.',
+    parameters: obj({
+      goal: str('What to do, in the words it was asked in'),
+      url: str('A page to work from, if one was named')
+    }, ['goal']),
+    run: async ({ goal, url = null }, { signal } = {}) => {
+      const r = await runTask({
+        goal,
+        url: url || null,
+        browser: ctx.browser,
+        provider: ctx.provider,
+        model: ctx.config.get('llm.model'),
+        config: ctx.config,
+        logger: ctx.logger,
+        signal
+      });
+      if (!r.ok) return { ok: false, summary: r.summary };
+
+      // Spoken short, because the work itself is for reading. And it says
+      // which it was — found or written — because those are different things
+      // and only one of them has been checked against anything.
+      const spoken = r.found.length
+        ? 'Found it, and saved it.'
+        : (r.file ? 'I wrote it and saved it. Worth checking.' : 'I wrote it. Worth checking.');
+
+      return {
+        ok: true,
+        summary: r.summary,
+        spoken,
+        found: r.file ? [{ glyph: '📄', title: require('path').basename(r.file), subtitle: r.found.length ? 'found' : 'written by me' }] : []
       };
     }
   }
@@ -820,6 +860,7 @@ const OPENINGS = {
   search_web: 'Searching the web.',
   answer_from_web: 'Looking that up.',
   show_image: 'Finding a picture.',
+  do_task: 'Let me work on that.',
   list_grades: 'Checking your grades.',
   canvas_grades: 'Checking Canvas.',
   canvas_assignments: 'Checking Canvas.',
@@ -869,6 +910,7 @@ function buildTools(ctx) {
     ...weatherTools(ctx),
     ...personalTools(ctx),
     ...imageTools(ctx),
+    ...taskTools(ctx),
     ...musicSearchTools(ctx),
     // Only offered when a connection manager is present to resolve tokens.
     ...(ctx.connections ? googleTools(ctx) : []),
