@@ -6,9 +6,9 @@
  * transcript store), the global hotkeys, the tray, and every window.
  *
  * The one hard rule here: the notch window must never take keyboard focus. The
- * whole product depends on the user's own text field staying focused while they
- * speak, so the notch is created with `focusable: false` and nothing is ever
- * allowed to call focus() on it.
+ * The console is the app: one window showing what the assistant is doing.
+ * It owns the microphone, so closing it hides it rather than destroying it.
+ *
  */
 const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, screen, shell, nativeImage, dialog } = require('electron');
 const path = require('path');
@@ -19,8 +19,8 @@ const { config } = require('../core/config');
 const { paths, ensureDirs } = require('../core/paths');
 const { getBridge } = require('../core/native/bridge');
 const { WhisperEngine } = require('../core/stt/whisper');
-const { createProvider } = require('../core/llm/provider');
-const { FallbackProvider } = require('../core/llm/fallback');
+const { GroqWhisper, CloudFirstStt } = require('../core/stt/groq');
+const { createBrain, readCredentials } = require('../core/llm');
 const { TranscriptStore } = require('../core/memory/transcripts');
 const { DictationMode } = require('../core/modes/dictation');
 const { EditMode, classify } = require('../core/modes/edit');
@@ -29,8 +29,9 @@ const { OPENINGS, SMALL_TALK } = require('../core/agent/tools');
 const { Agent } = require('../core/agent/agent');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { SpeechStream } = require('../core/tts/stream');
-const { KokoroTts } = require('../core/tts/kokoro');
+const { createTts } = require('../core/tts');
 const { WakeDetector } = require('../core/wake/detector');
+const { Ambient } = require('../core/agent/ambient');
 const { McpManager } = require('../core/mcp/manager');
 const { getBrowser } = require('../core/browser/cdp');
 const { ConnectionManager } = require('../core/connect/manager');
@@ -55,7 +56,7 @@ const services = {
 };
 
 const windows = {
-  notch: null,
+  console: null,
   settings: null,
   rail: null,
   onboarding: null,
@@ -117,16 +118,44 @@ function armWatchdog() {
   if (session.watchdog) clearTimeout(session.watchdog);
   session.watchdog = setTimeout(() => {
     logger.warn(`session watchdog fired after ${WATCHDOG_MS}ms in phase ${session.phase}; returning to idle`);
-    broadcast('session-error', {
-      message: 'Timed out',
-      detail: 'No audio arrived. Check that a microphone is connected and permitted.'
-    });
+    // The old message blamed the microphone whatever had happened, which was
+    // actively misleading: by the processing phase the audio has already been
+    // heard and transcribed, and what timed out was the answer. Being told to
+    // check your microphone sends you looking in the wrong place entirely.
+    broadcast('session-error', session.phase === PHASE.PROCESSING
+      ? {
+        message: 'Took too long',
+        detail: 'I heard you, but the answer did not come back in time. ' +
+                'The hosted model may be rate limited; the local one is slow on this machine.'
+      }
+      : {
+        message: 'Timed out',
+        detail: 'No audio arrived. Check that a microphone is connected and permitted.'
+      });
     resetSession('watchdog');
-    setTimeout(idleNotch, 2500);
+    setTimeout(goIdle, 2500);
   }, WATCHDOG_MS);
 }
 
 // --- Service wiring -------------------------------------------------------
+
+/**
+ * What hears the user: Groq when there is a key for it, the local engine
+ * behind it either way. stt.cloud = '' keeps every word on this laptop.
+ */
+function buildSpeech() {
+  const local = buildStt();
+  if (config.get('stt.cloud', 'groq') !== 'groq') return local;
+  const apiKey = readCredentials().groq || '';
+  if (!apiKey) return local;
+  const model = config.get('stt.cloudModel', 'whisper-large-v3-turbo');
+  logger.info(`[stt] groq first (${model}), local whisper behind it`);
+  return new CloudFirstStt({
+    cloud: new GroqWhisper({ apiKey, model, language: config.get('stt.language', 'en') }),
+    local,
+    logger
+  });
+}
 
 function buildStt(modelOverride = null) {
   const cfg = config.all();
@@ -144,41 +173,13 @@ function buildStt(modelOverride = null) {
 }
 
 function buildProvider() {
-  const cfg = config.all();
-  const credentials = readCredentials();
-  const one = (name) => createProvider(name, {
-    baseUrl: name === 'ollama' ? cfg.llm.baseUrl : undefined,
-    keepAlive: cfg.llm.keepAlive,
-    numCtx: cfg.llm.numCtx,
-    apiKey: credentials[name] || '',
-    logger
-  });
-
-  const primary = one(cfg.llm.provider);
-  const fallback = cfg.llm.fallbackProvider;
-
-  // Only worth pairing when they are actually different: a provider behind
-  // itself is two attempts at the same failure.
-  if (!fallback || fallback === cfg.llm.provider) return primary;
-
-  logger.info(`[llm] ${cfg.llm.provider} first, ${fallback} behind it`);
-  return new FallbackProvider({
-    primary,
-    secondary: one(fallback),
-    secondaryModel: cfg.llm.fallbackModel || null,
-    logger
-  });
+  return createBrain({ config, logger });
 }
 
 /**
  * API keys live outside config.json so that exporting or sharing settings never
  * leaks a key. Only ever read and written locally.
  */
-function readCredentials() {
-  try { return JSON.parse(fs.readFileSync(paths.credentials, 'utf8')); }
-  catch { return {}; }
-}
-
 function writeCredentials(next) {
   fs.writeFileSync(paths.credentials, JSON.stringify(next, null, 2), 'utf8');
   try { fs.chmodSync(paths.credentials, 0o600); } catch { /* best effort on Windows */ }
@@ -191,29 +192,20 @@ function writeCredentials(next) {
  * work rather than the app starting mute.
  */
 function buildTts() {
-  const engine = config.get('tts.engine', 'kokoro');
-  if (engine === 'kokoro' && KokoroTts.available()) {
-    return new KokoroTts({
-      voice: config.get('tts.voice', 'af_heart'),
-      speed: config.get('tts.speed', 1),
-      dtype: config.get('tts.dtype', 'q4'),
-      logger
-    });
+  const { tts, engine, reason } = createTts({ config, logger });
+  if (!tts) {
+    // Mute, and saying so. The app still runs; it just cannot speak.
+    logger.error(`[tts] no voice engine: ${reason}`);
+    return new PiperTts({ voice: config.get('tts.piperVoice', 'en_US-amy-medium'), logger });
   }
-  if (engine === 'kokoro') {
-    logger.warn('[tts] kokoro-js is not installed; falling back to Piper');
-  }
-  return new PiperTts({
-    voice: config.get('tts.piperVoice', 'en_US-amy-medium'),
-    speed: config.get('tts.speed', 1),
-    logger
-  });
+  logger.info(`[tts] speaking with ${engine}`);
+  return tts;
 }
 
 async function initServices() {
   ensureDirs();
   services.bridge = getBridge({ logger });
-  services.stt = buildStt();
+  services.stt = buildSpeech();
   // Interim transcripts are thrown away a second after they appear, so they
   // use the smallest model whatever the configured one is.
   services.sttFast = buildStt('ggml-tiny.en-q5_1.bin');
@@ -226,6 +218,10 @@ async function initServices() {
     headless: config.get('browser.headless', false)
   });
   services.mcp = new McpManager({ config, logger });
+  // Weather and where we are, fetched before anyone asks rather than during
+  // the answer. "What's the weather" measured 3.7s, nearly all of it two
+  // network calls in series for facts that change hourly at most.
+  services.ambient = new Ambient({ config, logger });
 
   services.connections = new ConnectionManager({
     config,
@@ -243,6 +239,7 @@ async function initServices() {
     tts: services.tts,
     connections: services.connections,
     mcp: services.mcp,
+    ambient: services.ambient,
     logger,
     requestConfirmation
   });
@@ -290,6 +287,9 @@ async function initServices() {
     // Last, because each is someone else's process: a slow or broken server
     // must cost its own tools and nothing that was already working.
     services.mcp.start().catch((err) => logger.warn(`[mcp] ${err.message}`));
+    // Not awaited: nothing should wait on the weather to launch, and a
+    // question that beats the first fetch just takes the slow path once.
+    services.ambient.start();
   });
 
   services.transcripts.prune()
@@ -306,7 +306,7 @@ async function initServices() {
 
 /** Rebuilds the services whose construction depends on settings. */
 function reloadServices() {
-  services.stt = buildStt();
+  services.stt = buildSpeech();
   services.sttFast = buildStt('ggml-tiny.en-q5_1.bin');
   services.provider = buildProvider();
   services.tts = buildTts();
@@ -321,6 +321,7 @@ function reloadServices() {
     // change "check my email" would fall back to a web search about email.
     connections: services.connections,
     mcp: services.mcp,
+    ambient: services.ambient,
     logger,
     requestConfirmation
   });
@@ -349,80 +350,6 @@ function reloadServices() {
 
 // --- Windows --------------------------------------------------------------
 
-const NOTCH_WIDTH = 600;
-const NOTCH_HEIGHT = 520;
-
-/**
- * Where the island is actually clickable, in window-relative CSS pixels.
- * Reported by the renderer, because only it knows the current layout.
- */
-let hitRects = [];
-let pointerOverNotch = false;
-let hoverTimer = null;
-
-/**
- * Set while the compose box holds focus.
- *
- * The hover watch owns the window's focusable flag, and it would otherwise
- * revoke it the instant the pointer left the island — which is immediately,
- * because people move their hand to the keyboard to type. This is the compose
- * box's claim on that flag, and the watch leaves it alone while it is held.
- */
-let typingInNotch = false;
-
-/**
- * Polls the pointer and toggles click-through as it crosses the island.
- *
- * Electron does not deliver mouse moves to a window that is click-through and
- * non-focusable, so the renderer cannot do this itself. Polling here is the
- * only thing that makes the island reachable at all.
- */
-function startHoverWatch() {
-  if (hoverTimer) return;
-  hoverTimer = setInterval(async () => {
-    const win = windows.notch;
-    if (!win || win.isDestroyed() || !win.isVisible() || !hitRects.length) return;
-
-    try {
-      const pos = await services.bridge.cursorPos();
-      const bounds = win.getBounds();
-
-      // Converted with the measured ratio rather than an assumed one.
-      const x = toElectron(pos.x) - bounds.x;
-      const y = toElectron(pos.y) - bounds.y;
-
-      const inside = hitRects.some((r) =>
-        x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height);
-
-      if (inside === pointerOverNotch) return;
-      pointerOverNotch = inside;
-      logger.info(`[hover] pointer ${inside ? 'entered' : 'left'} the island at ${Math.round(x)},${Math.round(y)}`);
-
-      // Clearing ignore-mouse-events is not enough on Windows: a window
-      // created with focusable:false carries WS_EX_NOACTIVATE and clicks pass
-      // straight through it. Focusability has to come back with it.
-      //
-      // Being focusable does not steal focus; only an actual click does. So
-      // the user's own field keeps focus right up until they choose to click
-      // the island, which is exactly when they want it.
-      // Never while they are typing: taking focusability away mid-keystroke
-      // is what made the compose box look focused and do nothing.
-      if (!typingInNotch) {
-        win.setIgnoreMouseEvents(!inside, { forward: false });
-        win.setFocusable(inside);
-      }
-      win.webContents.send('notch-hover', inside);
-    } catch {
-      // A dropped poll is harmless; the next one corrects it.
-    }
-  }, 90);
-}
-
-function stopHoverWatch() {
-  if (hoverTimer) { clearInterval(hoverTimer); hoverTimer = null; }
-  pointerOverNotch = false;
-}
-
 /**
  * How many bridge pixels there are per Electron pixel.
  *
@@ -450,140 +377,6 @@ async function measureBridgeScale() {
 
 /** Bridge coordinates to Electron ones. */
 const toElectron = (v) => v / bridgeScale;
-
-function createNotch() {
-  if (windows.notch && !windows.notch.isDestroyed()) return windows.notch;
-
-  const win = new BrowserWindow({
-    width: NOTCH_WIDTH,
-    height: NOTCH_HEIGHT,
-    show: false,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    hasShadow: false,
-    // The entire product depends on the user's own field keeping focus while
-    // they dictate. A focusable overlay would break insertion.
-    focusable: false,
-    alwaysOnTop: true,
-    acceptFirstMouse: true,
-    webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'notch.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Lets getUserMedia run without a user gesture inside our own overlay.
-      autoplayPolicy: 'no-user-gesture-required'
-    }
-  });
-
-  win.setAlwaysOnTop(true, 'screen-saver');
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  // The overlay is on screen permanently, so it must not swallow clicks aimed
-  // at whatever is underneath. forward: true still delivers mouse movement to
-  // the renderer, which asks for input only while the pointer is on the pill.
-  win.setIgnoreMouseEvents(true, { forward: true });
-  pipeConsole(win, 'notch');
-  win.loadFile(path.join(__dirname, '..', 'renderer', 'notch', 'index.html'));
-
-  // The island is draggable, so its position is the user's to set.
-  let saveTimer = null;
-  win.on('move', () => {
-    clearTimeout(saveTimer);
-    // Debounced: 'move' fires continuously while dragging.
-    saveTimer = setTimeout(() => {
-      if (win.isDestroyed()) return;
-      const b = win.getBounds();
-      config.set('ui.notchBounds', { x: b.x, y: b.y, width: b.width, height: b.height });
-      reportDocking();
-    }, 300);
-  });
-
-  win.on('closed', () => { windows.notch = null; });
-  windows.notch = win;
-  positionNotch();
-  win.webContents.once('did-finish-load', () => reportDocking());
-  return win;
-}
-
-function positionNotch({ force = false } = {}) {
-  const win = windows.notch;
-  if (!win || win.isDestroyed()) return;
-
-  // Once the island has been dragged somewhere, that is where it belongs.
-  // Re-centring it on every session would undo the user's choice.
-  const saved = config.get('ui.notchBounds', null);
-  if (saved && !force) {
-    const visible = screen.getAllDisplays().some((d) =>
-      saved.x + saved.width > d.bounds.x &&
-      saved.x < d.bounds.x + d.bounds.width &&
-      saved.y + saved.height > d.bounds.y &&
-      saved.y < d.bounds.y + d.bounds.height);
-    // Unless that position is now off-screen, which happens when a monitor is
-    // unplugged; falling back beats leaving it somewhere unreachable.
-    if (visible) {
-      win.setBounds({ x: saved.x, y: saved.y, width: NOTCH_WIDTH, height: NOTCH_HEIGHT });
-      return;
-    }
-  }
-
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const position = config.get('ui.notchPosition', 'top');
-
-  // bounds, not workArea: docked at the top the island has to meet the
-  // physical edge, and workArea is inset by the taskbar.
-  const { x, y, width, height } = display.bounds;
-  const left = Math.round(x + (width - NOTCH_WIDTH) / 2);
-  const top = position === 'top' ? y : y + height - NOTCH_HEIGHT;
-
-  win.setBounds({ x: left, y: top, width: NOTCH_WIDTH, height: NOTCH_HEIGHT });
-}
-
-/** Tells the renderer whether it is parked against an edge or floating free. */
-function reportDocking() {
-  const win = windows.notch;
-  if (!win || win.isDestroyed()) return;
-  const b = win.getBounds();
-  const display = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + 10 });
-  const docked = Math.abs(b.y - display.bounds.y) < 6 ? 'top' : 'free';
-  win.webContents.send('notch-docked', docked);
-}
-
-function showNotch() {
-  const win = createNotch();
-  positionNotch();
-  startHoverWatch();
-  // showInactive, never show(): show() would focus the overlay and the text
-  // would land in the wrong place.
-  win.showInactive();
-}
-
-/**
- * Returns the overlay to its resting state.
- *
- * The notch is a permanent fixture while VoiceOS runs rather than something
- * that appears per dictation, so this collapses it back to the idle pill
- * instead of hiding the window. It is only actually hidden when the user turns
- * the overlay off in Settings.
- */
-function idleNotch() {
-  if (!windows.notch || windows.notch.isDestroyed()) return;
-  if (!config.get('ui.alwaysShowNotch', true)) {
-    windows.notch.hide();
-    return;
-  }
-  positionNotch();
-  startHoverWatch();
-  windows.notch.showInactive();
-  broadcast('session-idle', { hotkeys: activeHotkeys, position: config.get('ui.notchPosition', 'top') });
-}
-
-function hideNotch() { idleNotch(); }
 
 /**
  * The targeting overlay.
@@ -786,6 +579,144 @@ function createOnboarding() {
   return win;
 }
 
+/**
+ * The console: the app you actually open.
+ *
+ * The island is for talking to it without leaving what you were doing. This is
+ * for watching it work — what it is running, what it heard, what it cited and
+ * whether anything tried to interfere. Frameless because the title bar is part
+ * of the display rather than a strip of Windows chrome on top of it.
+ */
+/** Set once the app is really going, so close-to-hide stops intercepting. */
+let quitting = false;
+/** Wake frames since the microphone last opened; reset when the console closes. */
+let wakeFramesSeen = 0;
+/** A hotkey pressed while the console was closed, waiting for it to load. */
+let pendingStart = null;
+app.on('before-quit', () => { quitting = true; });
+
+/**
+ * Opens the console, or brings it back.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.focus] false when a hotkey opened it: dictation types
+ *   into whatever app the user is in, so the console must appear without
+ *   taking the keyboard from it
+ */
+function createConsole({ focus = true } = {}) {
+  if (windows.console && !windows.console.isDestroyed()) {
+    const existing = windows.console;
+    if (focus) { existing.show(); existing.focus(); }
+    else if (!existing.isVisible()) existing.showInactive();
+    return existing;
+  }
+
+  // The layout is drawn at 16:9 and scaled, so a 16:9 window fills it edge
+  // to edge. Sized from the screen rather than fixed: on a 1368-wide display
+  // a fixed 1440 window opens hanging off the edge.
+  const work = screen.getPrimaryDisplay().workAreaSize;
+  const consoleWidth = Math.min(1440, Math.round(work.width * 0.94));
+  const consoleHeight = Math.min(Math.round(consoleWidth * 941 / 1672), Math.round(work.height * 0.94));
+  const win = new BrowserWindow({
+    width: consoleWidth,
+    height: consoleHeight,
+    minWidth: 900,
+    minHeight: 540,
+    title: 'J.A.R.V.I.S.',
+    backgroundColor: '#e9eef4',
+    frame: false,
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'console.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  pipeConsole(win, 'console');
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'console', 'index.html'));
+  win.once('ready-to-show', () => { if (focus) win.show(); else win.showInactive(); });
+  /** Settles once the page's listeners exist, so a session can be started into it. */
+  win.voiceosReady = new Promise((resolve) => win.webContents.once('did-finish-load', resolve));
+  logger.info('[console] opened; microphone on');
+
+  // Vitals are polled rather than pushed from a dozen call sites: free memory
+  // is the only part that moves on its own, and a window that is not open
+  // should not cost anything.
+  const vitals = setInterval(() => {
+    if (win.isDestroyed() || !win.isVisible()) return;
+    win.webContents.send('console-vitals', readVitals());
+  }, 4000);
+
+  /*
+   * Closing really closes it. The console owns the microphone, so a closed
+   * console hears nothing — not the wake word, not anything — which is what
+   * closing should mean. It used to hide instead, to keep the wake word
+   * running, and that held the microphone open behind a window nobody could
+   * see, plus ~250MB of graphics memory and a renderer for it.
+   *
+   * Anything half-heard or half-said is cancelled rather than finished out of
+   * sight. The app stays in the tray, and the hotkeys or the tray reopen it.
+   */
+  win.on('close', () => {
+    if (quitting) return;
+    pendingStart = null;
+    if (session.phase !== PHASE.IDLE) cancelSession();
+    wakeFramesSeen = 0;
+    logger.info('[console] closed; microphone off');
+  });
+
+  win.on('closed', () => {
+    clearInterval(vitals);
+    windows.console = null;
+  });
+  windows.console = win;
+  return win;
+}
+
+/** A one-line reading of each moving part, for the Systems panel. */
+function readVitals() {
+  const freeGb = os.freemem() / 1e9;
+  const provider = config.get('llm.provider');
+  const model = config.get('llm.agentModel') || config.get('llm.model');
+  return {
+    brain: services.provider ? `${provider} / ${String(model).split('/').pop()}` : 'none',
+    voice: !config.get('tts.enabled', true) ? 'muted'
+      : config.get('tts.engine', 'kokoro') === 'piper'
+        ? `piper ${String(config.get('tts.piperVoice', '')).replace(/-(?:low|medium|high)$/, '')}`.trim()
+        : `${config.get('tts.engine', 'kokoro')} ${config.get('tts.voice', '')}`.trim(),
+    stt: (() => {
+      const local = config.get('stt.model', '').replace(/^ggml-|.bin$/g, '') || 'none';
+      const cloud = services.stt && services.stt.status && services.stt.status().cloud;
+      return cloud ? `groq ${cloud.replace(/^whisper-/, '')}, ${local} backup` : local;
+    })(),
+    wake: config.get('wake.enabled', true) ? 'hey jarvis' : 'off',
+    memory: `${freeGb.toFixed(1)} GB free`,
+    // The app has spent this whole project short of memory; the panel should
+    // say so rather than making the user guess why it got slow.
+    // With hearing and thinking in the cloud, what still needs memory here is
+    // the voice and the local transcription backup; below this, the backup
+    // cannot start. Above it, this laptop's usual ~1GB is enough.
+    memoryLow: freeGb < 0.7,
+    weather: skyLine()
+  };
+}
+
+/**
+ * The weather under the clock, from the forecast the ambient cache already
+ * holds. Nothing is fetched for it: a clock that makes network calls to
+ * decorate itself is the wrong trade on a machine this short of everything.
+ */
+function skyLine() {
+  const cached = services.ambient && services.ambient.weatherCache;
+  const found = cached && cached.value && cached.value.found && cached.value.found[0];
+  if (!found || !found.title) return null;
+  // "72°F — partly cloudy" becomes "PARTLY CLOUDY  72°F", as the design has it.
+  const [temp, sky] = String(found.title).split(/\s+—\s+/);
+  return sky ? `${sky}  ${temp}` : temp;
+}
+
 function createSettings() {
   if (windows.settings && !windows.settings.isDestroyed()) {
     windows.settings.show();
@@ -828,8 +759,48 @@ function pipeConsole(win, name) {
       logger.debug(`[${name}] ${message}`);
     }
   });
-  win.webContents.on('render-process-gone', (_e, details) =>
-    logger.error(`[${name}] render process gone: ${details.reason}`));
+  // A crashed overlay used to be logged and left for dead. That was survivable
+  // while the island sat on screen permanently, because a blank one was
+  // obvious. Now that it is summoned, a dead renderer is invisible until the
+  // moment it is needed, and the symptom is "the hotkey does nothing".
+  //
+  // Reloading respawns the renderer. Bounded, because a window that crashes on
+  // load would otherwise reload forever, and the log is more use than a loop.
+  let crashes = 0;
+  win.webContents.on('render-process-gone', (_e, details) => {
+    logger.error(`[${name}] render process gone: ${details.reason}`);
+    if (win.isDestroyed()) return;
+    if (++crashes > 3) {
+      logger.error(`[${name}] crashed ${crashes} times; leaving it down`);
+      return;
+    }
+    // A moment first: an out-of-memory crash reloaded instantly tends to be an
+    // out-of-memory crash again.
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      logger.info(`[${name}] reloading after crash (${crashes})`);
+      win.reload();
+    }, 1000);
+  });
+  // Staying up is what counts as recovered, not merely loading once.
+  win.webContents.on('did-finish-load', () => {
+    setTimeout(() => { if (!win.isDestroyed()) crashes = 0; }, 30000);
+  });
+}
+
+/**
+ * The session is over.
+ *
+ * This used to also park the island overlay, which is what it was named for.
+ * The overlay is gone and the console is the app, so all that is left is
+ * telling the windows that there is nothing running.
+ */
+function goIdle() {
+  broadcast('session-idle', {
+    hotkeys: activeHotkeys,
+    position: config.get('ui.notchPosition', 'top'),
+    ui: config.get('ui')
+  });
 }
 
 function broadcast(channel, payload) {
@@ -908,11 +879,13 @@ function registerFallbackAccelerators() {
       logger.warn(`could not bind ${mode}: ${err.message}`);
     }
   }
-  broadcast('session-idle', { hotkeys: activeHotkeys, position: config.get('ui.notchPosition', 'top') });
+  broadcast('session-idle', { hotkeys: activeHotkeys, position: config.get('ui.notchPosition', 'top'), ui: config.get('ui') });
 
 }
 
 function toggleSession(mode) {
+  // Pressed again while it is still opening: that is a cancel.
+  if (pendingStart) return stopSession();
   // While listening, the same key stops and submits. While processing, further
   // presses are ignored so a held or repeated hotkey cannot pile up.
   if (session.phase === PHASE.LISTENING) return stopSession();
@@ -934,14 +907,32 @@ async function activeAppBadge() {
 
 function startSession(mode, { handsFree = false, wake = false, followUp = false } = {}) {
   if (session.phase !== PHASE.IDLE) return;
+  /*
+   * Only an open window listens, so a hotkey pressed while it is closed opens
+   * it — without focus, so dictation still lands in the app being typed into
+   * — and recording starts once the page is there to do it. Speech before
+   * that moment has no microphone to go to; the window appearing is the cue.
+   */
+  const con = windows.console;
+  if (!con || con.isDestroyed()) {
+    const opened = createConsole({ focus: false });
+    pendingStart = { mode, opts: { handsFree, wake, followUp } };
+    opened.voiceosReady.then(() => {
+      const next = pendingStart;
+      pendingStart = null;
+      // Keys let go before it finished opening: there is nothing to record.
+      if (next) startSession(next.mode, next.opts);
+    });
+    return;
+  }
+  if (!con.isVisible()) con.showInactive();
   const status = services.stt.status();
   if (!status.ready) {
-    showNotch();
     broadcast('session-error', {
       message: 'Speech engine not installed',
       detail: status.problems.join(' ')
     });
-    setTimeout(idleNotch, 4000);
+    setTimeout(goIdle, 4000);
     return;
   }
   session = {
@@ -955,7 +946,6 @@ function startSession(mode, { handsFree = false, wake = false, followUp = false 
   // Transcription needs the CPU the warm-up is using.
   pauseWarm();
   armWatchdog();
-  showNotch();
   broadcast('session-start', { mode, handsFree, wake, followUp, config: config.all(), position: config.get('ui.notchPosition', 'top') });
   // Read the selection now, while it is still the user's: showing the overlay
   // or anything they do next can clear it. Edit Mode needs it, and it is only
@@ -992,6 +982,11 @@ function captureSelection() {
 }
 
 function stopSession() {
+  if (pendingStart) {
+    logger.info('[console] keys released before the window finished opening; nothing recorded');
+    pendingStart = null;
+    return;
+  }
   if (session.phase !== PHASE.LISTENING) return;
   stopTargeting();
   session.phase = PHASE.PROCESSING;
@@ -1001,12 +996,12 @@ function stopSession() {
 }
 
 function cancelSession() {
+  pendingStart = null;
   if (session.phase === PHASE.IDLE) return;
   if (session.abort) session.abort.abort();
   stopTargeting();
   resetSession('cancelled');
   broadcast('session-cancel', {});
-  idleNotch();
   logger.info('session cancelled');
 }
 
@@ -1112,12 +1107,20 @@ function registerIpc() {
         }
         logger.info(`[agent] heard "${transcript}"`);
 
-        // Hand the words back so a mishearing can be corrected. The overlay
-        // sends them on by itself a moment later unless the user intervenes,
-        // so speaking and doing nothing still works exactly as before.
+        // Show what was heard, then answer it.
+        //
+        // This used to stop here and wait: the island displayed the words and
+        // sent them on itself after a pause, so a mishearing could be caught.
+        // The island is gone and the console never had that step, so every
+        // spoken question was transcribed, displayed, and silently dropped —
+        // "it transcribes it but never replies".
+        //
+        // Rather than rebuild the pause, the words go straight through. A
+        // conversation should not have a confirmation step in it, and the
+        // remedy for a mishearing is to say it again, which costs less than
+        // two seconds of waiting on every single question.
         if (config.get('ui.liveTranscript', true)) {
-          broadcast('transcript', { text: transcript, confirmMs: config.get('ui.confirmMs', 2200) });
-          return { ok: true, transcript, awaitingConfirmation: true };
+          broadcast('transcript', { text: transcript, confirmMs: 0 });
         }
 
         return runAgent(transcript, { signal, source: 'voice' });
@@ -1135,7 +1138,7 @@ function registerIpc() {
     } finally {
       stopTargeting();
       resetSession('finished');
-      setTimeout(idleNotch, 2200);
+      setTimeout(goIdle, 2200);
     }
   });
 
@@ -1242,13 +1245,6 @@ function registerIpc() {
 
   ipcMain.handle('voiceos:open-onboarding', () => { createOnboarding(); return { ok: true }; });
 
-  ipcMain.on('voiceos:notch-interactive', (_e, interactive) => {
-    const win = windows.notch;
-    if (!win || win.isDestroyed()) return;
-    // Never made focusable: the user's own text field must keep focus.
-    win.setIgnoreMouseEvents(!interactive, { forward: true });
-  });
-
   ipcMain.on('voiceos:start-mode', (_e, mode) => {
     toggleSession(mode || 'dictation');
   });
@@ -1267,15 +1263,6 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.on('voiceos:request-idle', () => idleNotch());
-
-  ipcMain.on('voiceos:hit-rects', (_e, rects) => {
-    const next = Array.isArray(rects) ? rects : [];
-    if (!hitRects.length && next.length) {
-      logger.info(`[hover] island hit area: ${Math.round(next[0].width)}x${Math.round(next[0].height)}`);
-    }
-    hitRects = next;
-  });
 
   /**
    * Focus for the compose field only.
@@ -1284,19 +1271,18 @@ function registerIpc() {
    * text field. Typing needs focus, so it is granted for exactly as long as
    * the field is being used and handed straight back.
    */
-  ipcMain.on('voiceos:set-focusable', (_e, focusable) => {
-    const win = windows.notch;
+  ipcMain.handle('voiceos:console-status', () => ({
+    version: app.getVersion(),
+    vitals: readVitals()
+  }));
+
+  ipcMain.on('voiceos:console-minimize', () => windows.console && windows.console.minimize());
+  ipcMain.on('voiceos:console-maximize', () => {
+    const win = windows.console;
     if (!win || win.isDestroyed()) return;
-    typingInNotch = Boolean(focusable);
-    win.setFocusable(Boolean(focusable));
-    if (focusable) {
-      win.setIgnoreMouseEvents(false);
-      win.focus();
-    } else {
-      win.setIgnoreMouseEvents(true, { forward: true });
-      win.blur();
-    }
+    if (win.isMaximized()) win.unmaximize(); else win.maximize();
   });
+  ipcMain.on('voiceos:console-close', () => windows.console && windows.console.close());
 
   /**
    * A partial transcript, for showing the words while they are still being
@@ -1335,12 +1321,48 @@ function registerIpc() {
    * talking to it, and hearing its own name in their request would restart the
    * conversation under them.
    */
-  let wakeFramesSeen = 0;
   /**
    * The next turn of a conversation, asked for by the renderer once the spoken
    * reply has finished playing. Only it knows when that is; starting earlier
    * means recording itself saying the last answer.
    */
+  /**
+   * They talked over the answer.
+   *
+   * Cancelling and starting a turn are two messages, and sending them from the
+   * renderer is a race: the follow-up is refused if the old session has not
+   * finished winding down yet. Doing both here makes it one step.
+   */
+  ipcMain.on('voiceos:barge-in', () => {
+    if (!config.get('conversation.enabled', true)) return;
+    logger.info('[conversation] interrupted');
+    if (session.phase !== PHASE.IDLE) {
+      if (session.abort) session.abort.abort();
+      resetSession('interrupted');
+    }
+    // Their interruption is the next thing said, so it is a turn like any
+    // other — not a cancellation that leaves them talking to nothing.
+    conversationTurns++;
+    startSession('agent', { wake: true, followUp: true });
+  });
+
+  /*
+   * The console heard nothing worth sending: a follow-up window passed in
+   * silence, or recording stopped before anything was captured. Back to idle,
+   * quietly — this is the conversation ending, not an error. Without it the
+   * session sat in "listening" with the wake word ignored and typed questions
+   * refused, until the watchdog fired a minute and a half later.
+   */
+  ipcMain.on('voiceos:nothing-heard', () => {
+    if (session.phase === PHASE.IDLE) return;
+    if (session.abort) session.abort.abort();
+    logger.info(`[conversation] nothing heard; back to idle after ${Date.now() - session.startedAt}ms`);
+    stopTargeting();
+    resetSession('nothing heard');
+    conversationTurns = 0;
+    goIdle();
+  });
+
   ipcMain.on('voiceos:start-follow-up', () => {
     if (!config.get('conversation.enabled', true)) return;
     if (session.phase !== PHASE.IDLE) return;
@@ -1353,6 +1375,9 @@ function registerIpc() {
     startSession('agent', { wake: true, followUp: true });
   });
 
+  // Loud enough to be worth reporting, quiet enough not to fill the log.
+  const wakeNearMiss = Math.max(0.15, config.get('wake.threshold', 0.5) * 0.5);
+
   ipcMain.on('voiceos:wake-audio', (_e, { pcm }) => {
     const detector = services.wake;
     if (!detector || session.phase !== PHASE.IDLE) return;
@@ -1361,8 +1386,18 @@ function registerIpc() {
     if (++wakeFramesSeen === 25) logger.info('[wake] receiving microphone audio');
     try {
       const samples = pcm16ToFloat32(Buffer.from(pcm));
+
+
       detector.push(samples)
-        .then((r) => { if (r.hit) onWakeWord(r.score); })
+        .then((r) => {
+          if (r.hit) return onWakeWord(r.score);
+          // A near miss is the difference between "it cannot hear you" and
+          // "it hears you and the bar is too high", and there was no way to
+          // tell them apart: a wake word that never fires logs nothing at all.
+          if (r.score >= wakeNearMiss) {
+            logger.info(`[wake] near miss at ${r.score.toFixed(3)} (needs ${config.get('wake.threshold', 0.5)})`);
+          }
+        })
         .catch(() => {});
     } catch {
       // A dropped frame is harmless; the window slides on.
@@ -1373,23 +1408,35 @@ function registerIpc() {
   ipcMain.handle('voiceos:ask', async (_e, text) => {
     const question = String(text || '').trim();
     if (!question) return { ok: false };
-    if (session.phase !== PHASE.IDLE) return { ok: false, reason: 'busy' };
+    // A typed question wins. It used to be refused as "busy" whenever a
+    // session was open — including one stuck listening to an empty room —
+    // and the refusal was never shown, so the question simply vanished.
+    if (session.phase !== PHASE.IDLE) {
+      logger.info(`[agent] typed question replaces the ${session.phase} session`);
+      if (session.abort) session.abort.abort();
+      stopTargeting();
+      resetSession('typed over');
+    }
 
     session = {
       phase: PHASE.PROCESSING, mode: 'agent', startedAt: Date.now(),
       abort: new AbortController(), watchdog: null
     };
+    const mine = session;
     armWatchdog();
-    showNotch();
 
     try {
-      return runAgent(question, { signal: session.abort.signal, source: 'typed' });
+      // Awaited: without it the finally below reset the session the instant
+      // the answer started, so the app looked idle while it was still
+      // thinking and errors escaped this catch.
+      return await runAgent(question, { signal: session.abort.signal, source: 'typed' });
     } catch (err) {
       logger.error(`typed question failed: ${err.message}`);
       broadcast('session-error', { message: 'Something went wrong', detail: err.message });
       return { ok: false, reason: err.message };
     } finally {
-      resetSession('finished');
+      // Only if nothing newer has taken over in the meantime.
+      if (session === mine) resetSession('finished');
     }
   });
 
@@ -1539,6 +1586,23 @@ function commandVocabulary() {
   return [...new Set([...own, ...user, ...apps])].slice(0, 24);
 }
 
+/**
+ * Whether a whisper.cpp failure was it running out of memory.
+ *
+ * It aborts rather than reporting, so this reads the wreckage: the assertion
+ * it dies on and the Windows abort code it leaves behind.
+ */
+function isOutOfMemory(err) {
+  const m = String((err && err.message) || '');
+  return /mem_buffer != NULL/.test(m) ||
+         // 0xC0000409, the assertion abort, and 0xC0000005, an access
+         // violation. Both were observed on this machine at half a gigabyte
+         // free, from the same cause: the allocation it needed was refused
+         // and it carried on as though it had not been.
+         /3221226505|3221225477/.test(m) ||
+         /out of memory|bad_alloc|cannot allocate/i.test(m);
+}
+
 async function transcribeOnly(samples, sampleRate, signal) {
   const { writeWav, floatToPcm16, trimSilence } = require('../core/audio/wav');
   const trimmed = trimSilence(samples, { threshold: config.get('stt.vad.threshold'), sampleRate });
@@ -1548,11 +1612,45 @@ async function transcribeOnly(samples, sampleRate, signal) {
   writeWav(wavPath, floatToPcm16(trimmed), { sampleRate });
   try {
     const vocabulary = commandVocabulary();
-    const result = await services.stt.transcribe(wavPath, {
+    const opts = {
       language: config.get('stt.language') === 'auto' ? undefined : config.get('stt.language'),
       prompt: vocabulary.length ? `Vocabulary: ${vocabulary.join(', ')}.` : undefined,
       signal
-    });
+    };
+
+    let result;
+    try {
+      result = await services.stt.transcribe(wavPath, opts);
+    } catch (err) {
+      // whisper.cpp aborts rather than returning an error when it cannot get
+      // the memory it wants: GGML_ASSERT(ctx->mem_buffer != NULL), exit code
+      // 3221226505. Observed on this machine below about half a gigabyte
+      // free, which happens often enough to matter. The base model needs
+      // roughly four times what the tiny one does, so the second attempt
+      // usually fits — a slightly worse transcription beats "that did not
+      // work" when someone has just spoken a sentence out loud.
+      if (!isOutOfMemory(err) || !services.sttFast) throw err;
+      const freeGb = (os.freemem() / 1e9).toFixed(1);
+      logger.warn(`[stt] base model ran out of memory at ${freeGb}GB free; retrying with the small one`);
+      try {
+        result = await services.sttFast.transcribe(wavPath, opts);
+        logger.info('[stt] the small model answered instead');
+      } catch (err2) {
+        if (!isOutOfMemory(err2)) throw err2;
+        // Below roughly half a gigabyte free neither model can start, and
+        // "that did not work" sends the user looking for a bug in the
+        // microphone. Say what is actually wrong and what fixes it.
+        logger.error(`[stt] no model could run at ${freeGb}GB free`);
+        throw new Error(
+          `Not enough memory to transcribe (${freeGb}GB free). ` +
+          'Close some browser tabs or other apps and try again.'
+        );
+      }
+    }
+    // Logged because it was not: transcription is 0.8-1.5s of the wait and
+    // there was no way to see it, so every latency question about this app
+    // started with a guess.
+    logger.info(`[stt] transcribed in ${result.ms}ms by ${result.engine || 'local'} (${(result.rtf || 0).toFixed(2)}x realtime)`);
     return result.text;
   } finally {
     fs.rmSync(wavPath, { force: true });
@@ -1612,9 +1710,13 @@ function warmBrain({ delayMs = 2500 } = {}) {
   // that does not. The router answers nearly everything in about 4ms without
   // the model at all, so when memory is tight the model is left to load on
   // demand for the few questions that genuinely need it.
+  // Only when the brain actually lives here. A hosted one holds nothing
+  // resident, so there is no memory to protect and warming it is a single
+  // small request — which also surfaces a bad key now rather than on the
+  // first question.
   const freeGb = os.freemem() / 1e9;
   const floor = config.get('llm.warmIfFreeGb', 1.8);
-  if (freeGb < floor) {
+  if (services.provider && services.provider.local && freeGb < floor) {
     logger.info(
       `[llm] only ${freeGb.toFixed(1)}GB free; leaving the model unloaded so speech stays quick ` +
       '(it will load on demand)'
@@ -1745,7 +1847,6 @@ function onWakeWord(score) {
   logger.info(`[wake] heard, ${score.toFixed(3)}`);
   conversationTurns = 0;
 
-  showNotch();
   // Pre-rendered, so this is instant rather than the start of a wait.
   speak(config.get('wake.greeting', 'Yes? How can I help?'), { opening: true, force: true });
 
@@ -1796,7 +1897,13 @@ async function runAgent(question, { signal, source = 'voice' } = {}) {
   try {
     const result = await services.agent.run(question, {
       signal,
-      onStage: (stage, detail) => broadcast('session-stage', { stage, detail }),
+      onStage: (stage, detail) => {
+        broadcast('session-stage', { stage, detail });
+        // A tool that reports progress is working, not stuck: the browser can
+        // take a minute across ten pages, and the watchdog was written for a
+        // single request.
+        if (detail && detail.step && session.phase === PHASE.PROCESSING) armWatchdog();
+      },
       // Spoken while the tool is still running, not after it.
       onOpening: (line) => speak(line, { opening: true, turn }),
       onPartial: (text, { done, retracted } = {}) => {
@@ -1829,6 +1936,22 @@ async function runAgent(question, { signal, source = 'voice' } = {}) {
       `${result.exhausted ? ' [ran out of tool steps]' : ''}`
     );
 
+    // A page that tried to give the assistant orders is something the user
+    // should hear about. The fence already stopped it from being followed;
+    // this is so the defence is visible rather than silent, because a user who
+    // never learns it happened cannot decide to stop visiting that page.
+    if (result.injections && result.injections.length) {
+      for (const inj of result.injections) {
+        logger.warn(`[security] content from ${inj.tool} tried to give instructions: ${inj.samples[0]}`);
+      }
+      broadcast('security-warning', {
+        count: result.injections.length,
+        tool: result.injections[0].tool,
+        sample: result.injections[0].samples[0],
+        text: `Something on that page tried to give me instructions. I ignored it.`
+      });
+    }
+
     // A streamed reply has already been spoken sentence by sentence; saying it
     // again would read the whole thing twice.
     const alreadySpoken = partialSeen && stream && !result.spoken;
@@ -1855,6 +1978,17 @@ async function runAgent(question, { signal, source = 'voice' } = {}) {
     }
     return result;
   } catch (err) {
+    // Out of free quota is not a fault, and there is no local brain behind
+    // Groq any more to hide it. It is said as an ordinary reply, with when to
+    // ask again, rather than shown as a red error that looks like a bug.
+    if (err.code === 'rate_limited' && !(signal && signal.aborted)) {
+      logger.warn(`[agent] "${question}" not answered: groq free tier is busy (retry in ${err.retryAfterMs ?? '?'}ms)`);
+      if (stream) stream.cancel();
+      const result = { question, answer: err.message, found: [], ms: Date.now() - started, model: null, usedRouter: false };
+      broadcast('agent-result', result);
+      speak(err.message, { turn });
+      return result;
+    }
     logger.error(`[agent] "${question}" failed after ${Date.now() - started}ms: ${err.message}`);
     throw err;
   } finally {
@@ -1928,6 +2062,8 @@ function buildTray() {
       { label: `Agent  (${keys.agentToggle})`, click: () => toggleSession('agent') },
       { label: `Edit selection  (${keys.editToggle})`, click: () => toggleSession('edit') },
       { type: 'separator' },
+      { type: 'separator' },
+      { label: 'Open J.A.R.V.I.S.', click: () => createConsole() },
       { label: 'Settings…', click: () => createSettings() },
       { label: 'Run setup again…', click: () => createOnboarding() },
       { label: 'Open data folder', click: () => shell.openPath(paths.userData) },
@@ -1939,7 +2075,7 @@ function buildTray() {
   };
   refresh();
   config.onChange(refresh);
-  tray.on('click', () => createSettings());
+  tray.on('click', () => createConsole());
 }
 
 // --- Lifecycle ------------------------------------------------------------
@@ -1953,8 +2089,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    logger.info('second instance launched; focusing the existing window');
-    createSettings();
+    // Launching it again means "show me Jarvis", and the console is Jarvis.
+    logger.info('second instance launched; showing the console');
+    createConsole();
   });
 
   app.whenReady().then(async () => {
@@ -1966,10 +2103,12 @@ if (!app.requestSingleInstanceLock()) {
     screen.on('display-removed', () => measureBridgeScale());
 
     buildTray();
-    createNotch();
+    if (!config.get('ui.startInBackground', false)) createConsole();
     showRail();
-    // The overlay is visible from launch, not only while dictating.
-    setTimeout(idleNotch, 600);
+    // Settles the island into its resting state, which by default means
+    // out of sight until it is summoned. Only ui.alwaysShowNotch keeps it on
+    // screen from launch.
+    setTimeout(goIdle, 600);
 
     // Microphone access for our own windows only.
     const session_ = require('electron').session;
@@ -1988,7 +2127,6 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
-    stopHoverWatch();
     if (holdToTalk) holdToTalk.shutdown();
     if (services.bridge) services.bridge.stop();
   });

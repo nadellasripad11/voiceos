@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>scene art</title>
+  <style>
+    body { margin: 0; background: #e9eef4; font: 12px sans-serif; }
+    #wrap { position: relative; width: 1672px; height: 941px; overflow: hidden; }
+    #smoke { position: absolute; left: -400px; top: -300px; }
+    #core { position: absolute; left: 676px; top: 265px; width: 320px; height: 320px; border-radius: 50%; }
+    #info { position: fixed; bottom: 4px; left: 4px; }
+  </style>
+</head>
+<body>
+  <div id="wrap"><img id="smoke" /><img id="core" /></div>
+  <div id="info">rendering…</div>
+  <script src="generate.js"></script>
+  <script>if (location.search.includes('preview')) setTimeout(() => window.preview(), 50);</script>
+</body>
+</html>

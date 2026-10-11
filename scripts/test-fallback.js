@@ -132,6 +132,29 @@ function stub(name, behaviour) {
       local.calls.some((c) => c.warm === 'qwen'), JSON.stringify(local.calls));
   }
 
+  console.log('\nThe standby stays cold while the quick one is up:');
+  {
+    // Loading the local model costs ~1.2GB resident and slows speech by about
+    // 40% on this machine. Paying that to prepare an answer Groq is going to
+    // give is worse than paying the load on the rare question that falls
+    // through to it.
+    const fast = stub('groq', {});
+    const local = stub('ollama', {});
+    const p = new FallbackProvider({ primary: fast, secondary: local, secondaryModel: 'qwen', logger: quiet });
+    await p.warm('ignored');
+    check('nothing is loaded when the primary can answer',
+      local.calls.length === 0, JSON.stringify(local.calls));
+
+    // But a key that does not work must not leave the machine with no brain
+    // warmed at all.
+    const noKey = stub('groq', { available: false });
+    const local2 = stub('ollama', {});
+    const p2 = new FallbackProvider({ primary: noKey, secondary: local2, secondaryModel: 'qwen', logger: quiet });
+    await p2.warm('ignored');
+    check('and it is loaded when the primary cannot',
+      local2.calls.some((c) => c.warm === 'qwen'), JSON.stringify(local2.calls));
+  }
+
   console.log('\nStreaming:');
   {
     const bothStream = new FallbackProvider({

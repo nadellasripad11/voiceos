@@ -25,7 +25,7 @@ function worthRetrying(err) {
     /no .* api key|unauthor|forbidden|401|403/.test(m) ||      // not set up
     /429|rate.?limit|quota|too many requests/.test(m) ||       // out of allowance
     /50\d|bad gateway|unavailable|overloaded/.test(m) ||       // their end
-    /fetch failed|network|econn|enotfound|etimedout|timeout|abort/.test(m) // ours
+    /fetch failed|network|econn|enotfound|etimedout|timed? ?out|abort/.test(m) // ours
   );
 }
 
@@ -52,6 +52,12 @@ class FallbackProvider extends LlmProvider {
   /** Streams only if both do, so a fallback cannot change mid-reply. */
   get streams() { return Boolean(this.primary.streams && this.secondary.streams); }
 
+  /**
+   * Local only if both are. With a hosted primary the local standby stays
+   * cold, so the pair costs no memory until something falls through to it.
+   */
+  get local() { return Boolean(this.primary.local && this.secondary.local); }
+
   async available() {
     if (await this.primary.available().catch(() => false)) return true;
     return this.secondary.available().catch(() => false);
@@ -62,12 +68,26 @@ class FallbackProvider extends LlmProvider {
     catch { return this.secondary.listModels().catch(() => []); }
   }
 
-  /** Only the local one has anything to load. */
+  /**
+   * Loads the local model, but only when it is the one that will answer.
+   *
+   * A hosted provider has nothing to warm — it is a URL. The local one costs
+   * about 1.2GB resident, and on a machine with a gigabyte free that is memory
+   * taken from speech synthesis, which the config comments already note slows
+   * it by roughly 40%. Warming a standby that a working Groq key means nobody
+   * will ask is the worst of both: slower speech to prepare an answer that
+   * never comes from there.
+   *
+   * So the standby stays cold while the primary is up, and pays its load time
+   * on the first question that actually falls through to it.
+   */
   async warm(model, opts) {
-    if (typeof this.secondary.warm === 'function') {
-      return this.secondary.warm(this.secondaryModel || model, opts);
+    if (typeof this.secondary.warm !== 'function') return false;
+    if (await this.primary.available().catch(() => false)) {
+      this.logger.info?.(`[llm] ${this.primary.name} is up; leaving ${this.secondary.name} cold`);
+      return false;
     }
-    return false;
+    return this.secondary.warm(this.secondaryModel || model, opts);
   }
 
   async chat(req) {

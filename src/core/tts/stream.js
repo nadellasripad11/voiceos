@@ -18,6 +18,23 @@ const { speakableSummary } = require('./piper');
 const BOUNDARY = /[.!?](?:["'’”)\]]+)?(?=\s)/g;
 
 /**
+ * Where the FIRST clip may end: a sentence end, or a comma, semicolon, colon
+ * or dash.
+ *
+ * Only the first. Every clip after it is synthesized while the previous one is
+ * still playing, so its length is free — but nothing is playing yet while the
+ * first is being made, and every character in it is silence the user sits
+ * through. "The capital of France is Paris, a city known for its art, fashion
+ * and cuisine, and the seat of government for centuries." is a single sentence
+ * and about nine seconds of audio; waiting for all of it before making a sound
+ * is the difference between an assistant and a progress bar.
+ *
+ * The cost is a prosodic seam at a punctuation mark, which is where a person
+ * would draw breath anyway.
+ */
+const FIRST_BOUNDARY = /[.!?,;:—–](?:["'’”)\]]+)?(?=\s)/g;
+
+/**
  * The longest prefix of `text` that ends on a sentence boundary.
  * Returns 0 when nothing is complete yet, so the caller keeps waiting.
  */
@@ -27,6 +44,25 @@ function completeLength(text) {
   let m;
   while ((m = BOUNDARY.exec(text)) !== null) end = m.index + m[0].length;
   return end;
+}
+
+/**
+ * The earliest point the first clip can end without being a stub.
+ *
+ * The longest complete prefix is right for later clips — more audio per call,
+ * and they are made during playback anyway — but wrong for the first, where
+ * the shortest usable fragment is what gets sound out soonest. Returns 0 when
+ * no clause of at least `minChars` has arrived yet, so the caller keeps
+ * waiting rather than speaking a stub.
+ */
+function firstClipLength(text, minChars) {
+  FIRST_BOUNDARY.lastIndex = 0;
+  let m;
+  while ((m = FIRST_BOUNDARY.exec(text)) !== null) {
+    const end = m.index + m[0].length;
+    if (end >= minChars) return end;
+  }
+  return 0;
 }
 
 /**
@@ -107,10 +143,13 @@ class SpeechStream {
     if (text.length <= this.consumed) return;
 
     const rest = text.slice(this.consumed);
-    const end = completeLength(rest);
+    // The first clip takes the earliest clause long enough to be worth
+    // playing; the rest take the longest complete prefix, because they are
+    // made while the previous clip plays and bigger calls cost less per word.
+    const end = this.seq === 0
+      ? firstClipLength(rest, this.minFirstChars)
+      : completeLength(rest);
     if (!end) return;
-    // Hold back a one-word opener so the first clip is worth playing.
-    if (this.seq === 0 && end < this.minFirstChars && text.length - this.consumed < this.minFirstChars * 2) return;
 
     this.consumed += end;
     this.enqueue(rest.slice(0, end));
@@ -166,4 +205,4 @@ class SpeechStream {
   }
 }
 
-module.exports = { SpeechStream, completeLength, splitSentences };
+module.exports = { SpeechStream, completeLength, firstClipLength, splitSentences };

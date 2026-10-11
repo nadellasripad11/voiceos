@@ -25,6 +25,12 @@ const DEFAULTS = {
   // i.e. 3.2x faster, with accuracy held at 100% once the vocabulary prompt is
   // supplied. Re-run `npm run bench` on better hardware and raise `model`.
   stt: {
+    // Transcribe on Groq (whisper-large-v3-turbo) with local whisper.cpp
+    // behind it. ~0.5s instead of 2-16s of every core on this laptop, and
+    // more accurate. Only the clip of one request is sent, after the wake
+    // word or a hotkey; '' keeps every word on the machine.
+    cloud: 'groq',
+    cloudModel: 'whisper-large-v3-turbo',
     engine: 'whisper.cpp',            // 'whisper.cpp' | 'whisper-server'
     model: 'ggml-base.en-q5_1.bin',   // quantized: ~2x faster, same accuracy here
     language: 'en',                 // 'auto' or an ISO code; 100 languages supported
@@ -54,20 +60,26 @@ const DEFAULTS = {
   },
 
   llm: {
-    provider: 'ollama',
+    // Groq's free tier answers in about a quarter of a second; the local 1.5B
+    // on this machine took fifty. Speed here is not a preference, it is the
+    // difference between a voice assistant and a form you wait on.
+    provider: 'groq',
 
-    // A hosted provider is quick but needs the internet and has a free-tier
-    // limit; the local one is slow but always here. Setting provider to
-    // 'groq' and leaving this as 'ollama' uses the quick one and keeps the
-    // local one for when it cannot answer — so adding a key removes nothing.
-    // Set to null to use only the provider above.
-    fallbackProvider: 'ollama',
+    // No local brain behind Groq. It used to be Ollama, and on this laptop
+    // the moment Groq was busy it loaded a 1-1.5GB model into ~1GB of free
+    // memory and froze everything. A busy Groq is now waited out (it says
+    // how long, usually seconds) and retried once; past that Jarvis says so.
+    // Set to 'ollama' to bring the local fallback back.
+    fallbackProvider: '',
     fallbackModel: 'qwen2.5:1.5b-instruct',
     baseUrl: 'http://127.0.0.1:11434',
     // Small by default so this laptop stays responsive.
-    model: 'qwen2.5:3b-instruct',
+    model: 'qwen/qwen3.8-27b',
     // Used for Agent Mode, where tool-calling accuracy matters most.
-    agentModel: 'qwen2.5:7b-instruct',
+    // Same model for Agent Mode: it called the right tool every time in
+    // scripts/bench-groq.js, and a 7B local model on this machine does not
+    // finish inside a minute.
+    agentModel: 'qwen/qwen3.8-27b',
     temperature: 0.2,
     numCtx: 8192,
     keepAlive: '10m',
@@ -88,21 +100,51 @@ const DEFAULTS = {
     // on this CPU, which is why the quantisation is pinned rather than left to
     // the library's default. The fixed phrases are pre-rendered at launch
     // either way, so the opening line is instant whichever engine is chosen.
-    engine: 'kokoro',             // 'kokoro' | 'piper'
+    // Piper, not Kokoro, and measured rather than assumed. Of every free
+    // British male voice available, alan sits almost exactly on JARVIS:
+    // 97 Hz against his 100-115, and 131 words per minute against ~130.
+    // Kokoro's bm_george was 138 Hz, which is well above him.
+    //
+    // It is also about five times quicker to synthesise here — 780ms where
+    // Kokoro took four seconds — so the closest voice is also the fastest.
+    engine: 'piper',              // 'kokoro' | 'piper'
     dtype: 'q4',                  // kokoro only: 'q4' | 'q8' | 'fp32'
 
     // Kokoro voices: heart, bella, nicole, sarah, emma (British), michael,
     // george — or any raw id such as 'af_heart'.
-    voice: 'af_heart',
+    // A British male voice, because that is what JARVIS is. Kokoro ships
+    // four — bm_george, bm_lewis, bm_daniel, bm_fable — and they all
+    // synthesise at about the same speed on this machine, so the choice is
+    // purely how they sound.
+    voice: 'bm_george',
 
     // Used only when engine is 'piper'.
-    piperVoice: 'en_US-amy-medium',
+    piperVoice: 'en_GB-alan-medium',
     // Left at 1. Measured: raising it shortens the audio but not the time to
     // make it — Kokoro's cost is per token, not per second — so it only
     // worsens the margin between synthesis and playback, which is what
     // decides whether streamed sentences run together or leave gaps.
-    speed: 1.0,
+    // Measured against clips of the real thing: those run at about 199 words
+    // per minute, and this voice does 154 at 1.0. 1.3 puts it at 182 — brisk
+    // and certain rather than careful, which is most of what separated ours
+    // from the clips. 1.45 matches them exactly but starts clipping words.
+    //
+    // It is also cheaper: shorter audio is less audio to synthesise, so the
+    // faster setting reaches the speaker sooner as well as finishing sooner.
+    speed: 1.3,
     speakAgentReplies: true,
+
+    // How much of a reply is read aloud before it stops.
+    //
+    // This was 320 characters, on the reasoning that nobody wants an essay
+    // read at them. But a six-item news brief is nine hundred characters of
+    // things the user asked for, and it was being cut off a third of the way
+    // through — the answer was complete on screen and truncated in the ear,
+    // which is the worst of both.
+    //
+    // High enough that a real answer finishes, low enough that a runaway
+    // model does not talk for five minutes.
+    maxSpokenChars: 2400,
     speakConfirmations: false
   },
 
@@ -163,7 +205,9 @@ const DEFAULTS = {
     // One spoken phrase covers several windows, so without this it would fire
     // repeatedly as the window slides across it.
     refractoryMs: 2500,
-    greeting: 'Hey sir, how can I help you?'
+    // Spoken the instant the wake word lands, from the pre-rendered cache,
+    // so it has to be short. "Hey sir" was neither the voice nor the manner.
+    greeting: 'At your service, sir.',
   },
 
   // After it answers, it listens for a reply so you do not have to say its
@@ -191,20 +235,15 @@ const DEFAULTS = {
   //   { name: 'memory', command: 'npx', args: ['-y','@modelcontextprotocol/server-memory'] }
   mcp: {
     enabled: true,
-    servers: []
-  },
-
-  ui: {
-    // Show the words as they are spoken, in place of the level meter, and
-    // hand the finished transcript back for correction before it is acted on.
-    // Show a picture when the question is about something that can be seen.
-    // Fetched in the main process and handed to the overlay as bytes, so the
-    // overlay itself never makes a network request.
-    images: true,
-    liveTranscript: true,
-    // How long the transcript waits in the box before sending itself. Any
-    // keystroke cancels it, so this is a grace period rather than a prompt.
-    confirmMs: 2200
+    servers: [],
+    // Servers whose read-only tools may run without asking first.
+    //
+    // Empty on purpose. An MCP server is someone else's code running against
+    // your accounts, and the "this tool only reads" annotation is that code's
+    // claim about itself — a server that wanted to act unasked would simply
+    // make the claim. Naming a server here is you vouching for it, which is
+    // the only signal worth trusting.
+    trustedServers: []
   },
 
   edit: {
@@ -239,13 +278,69 @@ const DEFAULTS = {
     theme: 'system',
     notchPosition: 'top',         // top | bottom
     showWaveform: true,
-    alwaysShowNotch: true,        // the overlay is a permanent fixture, not per-dictation
-    showHistoryRail: true,        // thin strip on the left edge of the screen
+    // The island appears when you summon it and goes away again, rather
+    // than sitting on top of your windows all day. Turn it on to keep it
+    // permanently on screen.
+    alwaysShowNotch: false,
+    // The thin strip down the left edge. Off for the same reason the island
+    // is: nothing of ours sits on screen unless it was asked for.
+    showHistoryRail: false,
     soundEffects: true,
     language: 'en',
     launchAtLogin: false,
     startInBackground: false,   // stay in the tray at login rather than opening the window
-    showActiveAppIcon: true     // the pill shows which app your words will land in
+    showActiveAppIcon: true,    // the pill shows which app your words will land in
+
+    // Show the words as they are spoken, in place of the level meter, and
+    // hand the finished transcript back for correction before it is acted on.
+    liveTranscript: true,
+    // How long the transcript waits in the box before sending itself. Any
+    // keystroke cancels it, so this is a grace period rather than a prompt.
+    confirmMs: 2200,
+    // Show a picture when the question is about something that can be seen.
+    // Fetched in the main process and handed to the overlay as bytes, so the
+    // overlay itself never makes a network request.
+    images: true,
+    // Press and hold the island this long to pick it up. Long enough that an
+    // ordinary click is never mistaken for a move, short enough not to feel
+    // like waiting.
+    holdToMoveMs: 600
+  },
+
+  messaging: {
+    // Which app an unqualified "message X" goes to.
+    defaultChannel: 'sms',           // 'sms' | 'whatsapp'
+
+    // Numbers for the people you text, because the SMS route hands Windows a
+    // number rather than a name: Phone Link is driven through the sms: link
+    // it registers, and that link takes a number.
+    //
+    // WhatsApp needs none of this — it searches your chats by name.
+    //
+    //   "maya": "+15551234567"
+    contacts: {
+      // The user's own phone, so "text me the summary" has somewhere to go.
+      me: '+14706389418',
+      myself: '+14706389418'
+    },
+
+    // Where a text goes when nobody is named. Only used for an unaddressed
+    // "send me a text" — an unknown name is still refused rather than
+    // quietly redirected here, because a message to the wrong person is the
+    // one mistake this cannot take back.
+    defaultNumber: '+14706389418',
+
+    // An API key for Textbelt, which sends a text outright rather than
+    // writing it into Phone Link for you to press send on.
+    //
+    // Empty means off, and off is the default on purpose: sending this way
+    // hands the recipient's number and the message text to a third party,
+    // which Phone Link does not. Nothing leaves this machine until you put a
+    // key here.
+    //
+    // The literal string 'textbelt' is their free tier — one text a day, no
+    // account. A real key is paid per text.
+    textbeltKey: ''
   },
 
   browser: {

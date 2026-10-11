@@ -101,6 +101,12 @@ async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs =
   const d = await res.json();
 
   const place_ = [where.name, where.region].filter(Boolean).join(', ');
+
+  // When the place asked for could not be found, the answer is for somewhere
+  // else and has to say so. Only the spoken line admitted it before, so anyone
+  // reading the screen saw "Marietta, Georgia: 69F" after asking about a park
+  // twenty miles away, with nothing to suggest it was not the answer.
+  const notFound = fellBackToHere ? `I could not find "${place}", so this is where you are.\n` : '';
   const daily = d.daily || {};
   const dayIndex = when === 'tomorrow' ? 1 : 0;
 
@@ -125,7 +131,7 @@ async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs =
       spoken: (fellBackToHere ? `I could not find ${place}. In ${where.name}, ` : '') +
         // Named only when it was asked for, for the same reason as above.
         `${place && !fellBackToHere ? `In ${where.name}, ` : ''}${temp} and ${sky}. High ${high}, low ${low}.`,
-      summary: `${place_}: ${temp}${symbol}, ${sky}${feelsShown}.\n` +
+      summary: notFound + `${place_}: ${temp}${symbol}, ${sky}${feelsShown}.\n` +
         `Today: high ${high}${symbol}, low ${low}${symbol}` +
         (rain != null ? `, ${rain}% chance of rain.` : '.'),
       found: [{
@@ -152,7 +158,7 @@ async function getWeather({ place = null, when = 'now', units = 'F', timeoutMs =
       // leaving it off a named place answers a question nobody asked.
       `${label}${place && !fellBackToHere ? ` in ${where.name}` : ''}: ${sky}, high ${high}, low ${low}` +
       (rain != null && rain >= 50 ? `, ${rain} percent rain.` : '.'),
-    summary: `${place_} — ${label.toLowerCase()}: ${sky}, high ${high}${symbol}, low ${low}${symbol}` +
+    summary: notFound + `${place_} — ${label.toLowerCase()}: ${sky}, high ${high}${symbol}, low ${low}${symbol}` +
       (rain != null ? `, ${rain}% chance of rain.` : '.'),
     found: [{
       glyph: '🌤️',
@@ -191,8 +197,41 @@ function decodeDdgUrl(href) {
   return m ? decodeURIComponent(m[1]) : href;
 }
 
+/**
+ * Searching, with somewhere to go when the first engine says no.
+ *
+ * DuckDuckGo's HTML page is free and needs no key, but it throttles: three
+ * searches in a row returned 8, 8 and then 0 results (a 202 challenge page),
+ * and in the app it failed outright — so "summarize world news" answered
+ * that the search did not come back. Behind it now: Wikipedia's search API
+ * for facts and Google News for anything current, both free, keyless and
+ * structured. Bing was tried and rejected: it answered "james webb telescope"
+ * with a Bible verse, and a confident wrong source is worse than none.
+ */
+let ddgCoolUntil = 0;
+
+async function search(query, { timeoutMs = 8000 } = {}) {
+  if (Date.now() >= ddgCoolUntil) {
+    try {
+      const results = await duckDuckGoHtml(query, timeoutMs);
+      if (results.length) return results;
+    } catch { /* falls through to the others */ }
+    // Throttled or unreachable: skip it for a while rather than paying its
+    // timeout on every question.
+    ddgCoolUntil = Date.now() + 2 * 60000;
+  }
+
+  const timely = /\b(?:news|latest|today|tonight|yesterday|this week|recent(?:ly)?|current(?:ly)?|right now|score|election|update)\b/i.test(query);
+  const [wiki, news] = await Promise.all([
+    searchWikipedia(query).catch(() => []),
+    timely ? newsHeadlines(query, { limit: 5 }).catch(() => []) : Promise.resolve([])
+  ]);
+  const fromNews = news.map((n) => ({ url: n.url, title: n.title, snippet: [n.source, n.when].filter(Boolean).join(', ') }));
+  return timely ? [...fromNews, ...wiki] : [...wiki, ...fromNews];
+}
+
 /** DuckDuckGo's HTML endpoint: no API key, no quota, no cost. */
-async function search(query, { timeoutMs = 12000 } = {}) {
+async function duckDuckGoHtml(query, timeoutMs) {
   const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
     headers: { 'User-Agent': UA },
     signal: AbortSignal.timeout(timeoutMs)
@@ -207,6 +246,59 @@ async function search(query, { timeoutMs = 12000 } = {}) {
     out.push({ url, title: stripHtml(m[2]), snippet: stripHtml(m[3]) });
   }
   return out;
+}
+
+/** Wikipedia's search: titles and a snippet each; the page is read if a snippet is too thin. */
+async function searchWikipedia(query, { limit = 4, timeoutMs = 6000 } = {}) {
+  const url = 'https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1' +
+    `&srlimit=${limit}&srsearch=${encodeURIComponent(query)}`;
+  const res = await fetch(url, {
+    // Wikipedia asks API clients to say who they are.
+    headers: { 'User-Agent': 'VoiceOS/0.1 (personal voice assistant)' },
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return ((data.query && data.query.search) || []).map((s) => ({
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(s.title.replace(/ /g, '_'))}`,
+    title: `${s.title} — Wikipedia`,
+    snippet: stripHtml(s.snippet)
+  }));
+}
+
+/**
+ * Headlines from Google News's RSS feed: top stories, or a topic search.
+ * Free, keyless, current, and arriving as structured items rather than a page
+ * to scrape. Each title comes as "Headline - Source"; the source is split off.
+ *
+ * @returns {Promise<Array<{title: string, source: string, url: string, when: string}>>}
+ */
+async function newsHeadlines(topic = '', { limit = 8, timeoutMs = 8000 } = {}) {
+  const base = 'https://news.google.com/rss';
+  const tail = 'hl=en-US&gl=US&ceid=US:en';
+  const url = topic ? `${base}/search?q=${encodeURIComponent(topic)}&${tail}` : `${base}?${tail}`;
+  const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) return [];
+  const xml = await res.text();
+  const field = (item, name) => {
+    const m = item.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`));
+    return m ? stripHtml(m[1].replace(/<!\[CDATA\[|\]\]>/g, '')) : '';
+  };
+  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, limit).map(([, item]) => {
+    const source = field(item, 'source');
+    let title = field(item, 'title');
+    if (source && title.endsWith(` - ${source}`)) title = title.slice(0, -(source.length + 3));
+    const published = Date.parse(field(item, 'pubDate'));
+    return { title, source, url: field(item, 'link'), when: published ? ago(published) : '' };
+  }).filter((n) => n.title);
+}
+
+/** "3 hours ago", for a headline's age. */
+function ago(at) {
+  const mins = Math.max(0, Math.round((Date.now() - at) / 60000));
+  if (mins < 60) return `${mins || 1} min ago`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `${hours} hour${hours === 1 ? '' : 's'} ago` : `${Math.round(hours / 24)} days ago`;
 }
 
 /** Fetches one page and returns its readable text, or null. */
@@ -267,7 +359,16 @@ async function answerFromWeb({ query, provider, model, logger = console, signal 
   }
 
   if (!results.length) {
-    return { ok: true, summary: `I could not find anything for "${query}".`, spoken: 'I could not find anything on that.' };
+    // miss, not an answer. The router picked this tool from the wording of the
+    // question, and finding nothing usually means it picked wrong rather than
+    // that the web is empty — so the agent gets to try the model instead of
+    // reading "I could not find anything" out as though it were the result.
+    return {
+      ok: true,
+      miss: true,
+      summary: `I could not find anything for "${query}".`,
+      spoken: 'I could not find anything on that.'
+    };
   }
 
   let context = results.slice(0, 4)
@@ -367,5 +468,6 @@ function cleanAnswer(text) {
 }
 module.exports = {
   getWeather, locateByIp, geocode, describeCode,
-  answerFromWeb, search, readPage, stripHtml, cleanAnswer, decodeDdgUrl, instantAnswer
+  answerFromWeb, search, readPage, stripHtml, cleanAnswer, decodeDdgUrl, instantAnswer,
+  newsHeadlines, searchWikipedia
 };

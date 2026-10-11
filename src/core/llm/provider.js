@@ -66,6 +66,16 @@ class LlmProvider {
   async listModels() { return []; }
   /** Whether this provider can deliver tokens as they are generated. */
   get streams() { return false; }
+
+  /**
+   * Whether answering costs memory on this machine.
+   *
+   * A local model is held resident — about 1.2GB for the small ones — and that
+   * memory comes out of speech synthesis. A hosted one is a URL and costs
+   * nothing to keep ready, so the caution that applies to loading the first
+   * does not apply to the second.
+   */
+  get local() { return false; }
   /**
    * @param {object} req
    * @param {(chunk: string, full: string) => void} [req.onToken] called with
@@ -89,6 +99,9 @@ class OllamaProvider extends LlmProvider {
   }
 
   get name() { return 'ollama'; }
+
+  /** Runs here, so loading it takes memory from everything else. */
+  get local() { return true; }
 
   async available() {
     try {
@@ -352,12 +365,47 @@ function stripUnsupportedSchema(schema) {
 
 // --- Groq (OpenAI-compatible, free tier) ----------------------------------
 
+/** The longest a reply waits for a busy free tier before saying so. */
+const MAX_RATE_WAIT_MS = 8000;
+
+/** Seconds from a 429's retry-after header, as milliseconds. */
+function retryAfterMs(res) {
+  const v = Number(res.headers.get('retry-after'));
+  return Number.isFinite(v) && v >= 0 ? Math.ceil(v * 1000) : null;
+}
+
+/** Waits, unless the user cancels first. */
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(t); reject(new Error('cancelled')); }, { once: true });
+  });
+}
+
+/**
+ * The free tier is used up for now, said the way Jarvis would say it.
+ * This message is what the user hears, so it names the wait rather than an
+ * HTTP status.
+ */
+function rateLimited(waitMs) {
+  const mins = waitMs ? Math.ceil(waitMs / 60000) : 1;
+  const when = !waitMs || waitMs < 90000 ? 'in a minute'
+    : mins < 60 ? `in about ${mins} minutes` : 'later today';
+  const err = new Error(`I have used up my free thinking time for the moment, sir. Ask me again ${when}.`);
+  err.code = 'rate_limited';
+  err.retryAfterMs = waitMs;
+  return err;
+}
+
 class OpenAiCompatibleProvider extends LlmProvider {
   constructor(opts = {}) {
     super(opts);
     this.apiKey = opts.apiKey || '';
     this.baseUrl = (opts.baseUrl || 'https://api.groq.com/openai/v1').replace(/\/$/, '');
     this.providerName = opts.providerName || 'groq';
+    // Long enough for a slow answer, short enough that a stalled connection
+    // falls through to the local model while the user is still listening.
+    this.timeoutMs = opts.timeoutMs || 20000;
   }
 
   get name() { return this.providerName; }
@@ -417,12 +465,41 @@ class OpenAiCompatibleProvider extends LlmProvider {
       }));
     }
 
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify(body),
-      signal
-    });
+    // A hosted call with no deadline can hang for ever, and a voice assistant
+    // that hangs is indistinguishable from one that ignored you: the log
+    // showed "heard ..." and then simply nothing, no answer and no error.
+    // A timeout turns that silence into a failure the fallback can act on.
+    const send = () => {
+      const deadline = AbortSignal.timeout(this.timeoutMs);
+      return fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+        body: JSON.stringify(body),
+        signal: signal ? AbortSignal.any([signal, deadline]) : deadline
+      });
+    };
+
+    let res = await send();
+
+    // Busy is usually the per-minute token cap, and Groq says how long until
+    // it clears — typically a few seconds. Waiting that out once is better
+    // than failing an answer the user is already listening for; a long wait
+    // (the daily cap) is reported instead, since nobody holds on for minutes.
+    if (res.status === 429) {
+      const wait = retryAfterMs(res);
+      await res.text().catch(() => '');
+      if (wait != null && wait <= MAX_RATE_WAIT_MS && !(signal && signal.aborted)) {
+        this.logger.info?.(`[llm] ${this.providerName} is busy; retrying in ${wait}ms`);
+        await sleep(wait, signal);
+        res = await send();
+      }
+      if (res.status === 429) {
+        const again = retryAfterMs(res) ?? wait;
+        await res.text().catch(() => '');
+        throw rateLimited(again);
+      }
+    }
+
     if (!res.ok) {
       const detail = (await res.text()).slice(0, 400);
       throw new Error(`${this.providerName} chat failed (HTTP ${res.status}): ${detail}`);

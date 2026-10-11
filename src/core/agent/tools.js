@@ -20,10 +20,13 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { paths } = require('../paths');
-const { answerFromWeb, getWeather } = require('./web');
+const { answerFromWeb, getWeather, search: webSearch, newsHeadlines } = require('./web');
 const { pictureFor, imageSubject } = require('./images');
 const { playOnWeb } = require('../music/spotify-web');
 const { runTask } = require('./task');
+const { runBrowse } = require('./browse');
+const { looksLikeExfiltration } = require('./untrusted');
+const { sendMessage } = require('./messaging');
 const { canvasTools } = require('./tools-canvas');
 const { googleTools } = require('./tools-google');
 
@@ -55,6 +58,23 @@ const systemTools = (ctx) => [
 
     run: async ({ url }) => {
       const safe = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+
+      // Opening a link is how an assistant that reads the web would leak what
+      // it read: the data rides in the query string and the request delivers
+      // it whether the page loads or not. An ordinary link carries short,
+      // readable terms, so this only stops the shape that is carrying a
+      // payload — and it asks rather than refuses, because a long legitimate
+      // URL exists too.
+      const exfil = looksLikeExfiltration(safe);
+      if (exfil.suspicious) {
+        ctx.logger?.warn?.(`[security] refused to open a link because ${exfil.reason}: ${safe.slice(0, 120)}`);
+        return {
+          ok: false,
+          summary: `I did not open that link: ${exfil.reason}. If you meant to, open it yourself.`,
+          blocked: true
+        };
+      }
+
       await ctx.bridge.openUrl(safe);
       return { ok: true, summary: `Opened ${safe}.`, found: [{ glyph: '🌐', title: safe, subtitle: 'Opened in your browser' }] };
     }
@@ -370,6 +390,58 @@ const personalTools = (ctx) => [
   }
 ];
 
+/**
+ * Messaging, through a browser already signed in.
+ *
+ * Two channels: a text goes through Google Messages for Web, WhatsApp goes
+ * through WhatsApp Web. Both are free and need no telephony account, which is
+ * what a phone call would have cost.
+ *
+ * mutating, and deliberately not autoConfirm: this is the only tool that
+ * speaks to other people in the user's name, and a misheard name sending to
+ * the wrong person is not a mistake an apology fixes.
+ */
+const messagingTools = (ctx) => [
+  {
+    name: 'send_message',
+    appId: 'whatsapp',
+    description: 'Send a text message (SMS) or a WhatsApp message to someone. Use whatsapp when they say WhatsApp; sms otherwise.',
+    parameters: obj({
+      to: str('The contact name, as it appears in their messages'),
+      text: str('What to say'),
+      channel: { type: 'string', enum: ['sms', 'whatsapp'], description: 'sms for a text message, whatsapp for WhatsApp' }
+    }, ['to', 'text']),
+    mutating: true,
+    confirm: ({ to, text, channel } = {}) => ({
+      app: channel === 'whatsapp' ? 'whatsapp' : 'messages',
+      // Naming the route matters: a text sent when WhatsApp was meant reaches
+      // the right person the wrong way, and they may never see it.
+      title: channel === 'whatsapp' ? `WhatsApp ${to}?` : `Text ${to}?`,
+      // The whole message, because approving what you cannot read is not
+      // approval.
+      detail: String(text || '')
+    }),
+    run: async ({ to, text, channel } = {}) => {
+      try {
+        return await sendMessage({
+          browser: ctx.browser,
+          bridge: ctx.bridge,
+          config: ctx.config,
+          channel: channel === 'whatsapp'
+            ? 'whatsapp'
+            : (channel || ctx.config.get('messaging.defaultChannel', 'sms')),
+          to,
+          text,
+          logger: ctx.logger
+        });
+      } catch (err) {
+        ctx.logger?.warn?.(`[message] ${err.message}`);
+        return { ok: false, summary: `I could not send that: ${err.message}` };
+      }
+    }
+  }
+];
+
 const weatherTools = (ctx) => [
   {
     name: 'weather',
@@ -381,11 +453,17 @@ const weatherTools = (ctx) => [
     }),
     run: async ({ place, when } = {}) => {
       try {
-        return await getWeather({
+        const args = {
           place: place || null,
           when: /tomorrow/i.test(when || '') ? 'tomorrow' : (/today/i.test(when || '') ? 'today' : 'now'),
           units: ctx.config.get('units.temperature', 'F')
-        });
+        };
+        // Served from the background refresher when it is the common case —
+        // here, now — which turns two network round trips into a property
+        // read. It falls through to the live call for anywhere else, and for
+        // any caller that was not given one.
+        if (ctx.ambient) return await ctx.ambient.weather(args);
+        return await getWeather(args);
       } catch (err) {
         ctx.logger.warn?.(`[weather] ${err.message}`);
         return { ok: false, summary: `I could not reach the weather service: ${err.message}` };
@@ -408,22 +486,39 @@ const weatherTools = (ctx) => [
  * the same seven words every single morning gets old fast.
  */
 const SMALL_TALK = {
-  greeting: ['Hello.', 'Hello there.', 'Hi.'],
-  morning: ['Good morning.'],
-  afternoon: ['Good afternoon.'],
-  evening: ['Good evening.'],
-  howAreYou: ['Running well, thank you. What do you need?', 'All good here. What can I do?'],
-  thanks: ['Any time.', 'My pleasure.', 'Of course.'],
-  identity: ["I'm VoiceOS. I listen, I type, and I run things on this machine."],
+  // Read aloud in a British male voice, so the register matters: "Hi." landed
+  // like a different person had answered. "Sir" is used sparingly on purpose —
+  // JARVIS says it, but on every line it stops being character and becomes a
+  // tic you want switched off.
+  greeting: ['Hello, sir.', 'Hello there.', 'Yes, sir?'],
+  morning: ['Good morning, sir.'],
+  afternoon: ['Good afternoon, sir.'],
+  evening: ['Good evening, sir.'],
+  howAreYou: ['Running well, thank you. What do you need?', 'All systems nominal. What can I do?'],
+  thanks: ['Any time.', 'My pleasure, sir.', 'Of course.'],
+  identity: ["I'm Jarvis. I listen, I type, and I run things on this machine."],
   capability: [
     'Hold Ctrl and Alt to dictate anywhere, or Ctrl and Shift to ask me something. ' +
     'Select text first and tell me how to change it, and I will rewrite it in place.'
   ],
-  goodbye: ['Goodbye.', 'Talk soon.'],
+  goodbye: ['Goodbye, sir.', 'Until next time.'],
   sorry: ['No harm done.']
 };
 
 const smallTalkTools = () => [
+  {
+    name: 'clock',
+    appId: 'system',
+    description: 'The current local time or date. No lookup.',
+    parameters: obj({ what: { type: 'string', description: 'time | date' } }),
+    run: async ({ what = 'time' } = {}) => {
+      const now = new Date();
+      const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const date = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+      const line = what === 'date' ? `It's ${date}, sir.` : `It's ${time}, sir.`;
+      return { ok: true, summary: `${time} — ${date}`, spoken: line };
+    }
+  },
   {
     name: 'small_talk',
     appId: 'system',
@@ -560,6 +655,59 @@ const webTools = (ctx) => [
     }
   },
   {
+    name: 'browse',
+    appId: 'web-search',
+    description: 'Use a real web browser like a person: open sites, search, click, type, scroll and read. For live prices, products, scores, flights, hotels, availability, or anything a search snippet cannot answer, or a task on a particular website. Pass the whole goal in the user\'s words.',
+    parameters: obj({
+      goal: str('What to find or do, in full, in the user\'s words'),
+      url: str('A site to start on, if the user named one')
+    }, ['goal']),
+    run: async ({ goal, url = null }, { signal, progress } = {}) => {
+      const r = await runBrowse({
+        goal,
+        startUrl: url && /^https?:\/\//i.test(url) ? url : (url ? `https://${url}` : null),
+        browser: ctx.browser,
+        provider: ctx.provider,
+        model: ctx.config.get('llm.agentModel') || ctx.config.get('llm.model'),
+        confirm: ctx.confirm,
+        progress: progress || (() => {}),
+        logger: ctx.logger,
+        signal,
+        maxSteps: ctx.config.get('agent.browseMaxSteps', 10),
+        context: ctx.ambient && ctx.ambient.snapshot ? ctx.ambient.snapshot() : ''
+      });
+      let host = '';
+      try { host = r.url ? new URL(r.url).hostname.replace(/^www\./, '') : ''; } catch { /* about:blank */ }
+      return {
+        ok: r.ok,
+        summary: r.answer,
+        spoken: r.answer,
+        found: host ? [{ glyph: '🌐', title: host, subtitle: r.url, url: r.url }] : []
+      };
+    }
+  },
+  {
+    name: 'news',
+    appId: 'web-search',
+    description: 'Current news headlines, optionally on a topic. Use for "what\'s the news", "headlines", "latest news about X", "summarize the news".',
+    parameters: obj({ topic: str('Optional topic, e.g. "technology" or "james webb telescope"; empty for top stories') }),
+    run: async ({ topic = '' } = {}) => {
+      const items = await newsHeadlines(topic, { limit: 8 });
+      if (!items.length) {
+        return { ok: false, summary: `I could not reach the news just now${topic ? ` about ${topic}` : ''}.` };
+      }
+      return {
+        ok: true,
+        // No "spoken": the digest step turns these into a sentence or two,
+        // which is the point — a list of eight headlines read aloud is not
+        // a summary of the news.
+        summary: `${topic ? `News about ${topic}` : 'Top stories'}:\n` +
+          items.map((n, i) => `${i + 1}. ${n.title} (${n.source}${n.when ? `, ${n.when}` : ''})`).join('\n'),
+        found: items.map((n) => ({ glyph: '📰', title: n.title, subtitle: [n.source, n.when].filter(Boolean).join(' · '), url: n.url }))
+      };
+    }
+  },
+  {
     name: 'answer_from_web',
     appId: 'web-search',
     description: 'Look up a direct factual answer, such as a definition, a conversion, or who someone is.',
@@ -605,25 +753,13 @@ const webTools = (ctx) => [
   }
 ];
 
-/** DuckDuckGo's HTML endpoint: no API key, no quota, no cost. */
+/**
+ * The web search every tool uses: DuckDuckGo, then Wikipedia and Google News
+ * when it throttles. There used to be a second copy of the DuckDuckGo code
+ * here with no fallback, which is the one search_web was calling.
+ */
 async function duckDuckGo(query) {
-  const res = await fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query), {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-    signal: AbortSignal.timeout(15000)
-  });
-  if (!res.ok) return [];
-  const html = await res.text();
-  const out = [];
-  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-  let m;
-  while ((m = re.exec(html)) && out.length < 8) {
-    out.push({
-      url: decodeDdgUrl(m[1]),
-      title: stripHtml(m[2]).trim(),
-      snippet: stripHtml(m[3]).trim()
-    });
-  }
-  return out;
+  return webSearch(query);
 }
 
 /** DuckDuckGo's Instant Answer API, for definitions and quick facts. */
@@ -852,10 +988,13 @@ const OPENINGS = {
   list_email: 'Checking your email.',
   read_email: 'Finding that message.',
   send_email: 'Drafting that.',
+  send_message: 'Opening your messages.',
   list_events: 'Looking at your calendar.',
   create_event: 'Adding that.',
   list_coursework: 'Checking what is due.',
   my_day: 'Let me look at your day.',
+  news: 'Checking the headlines.',
+  browse: 'Opening the browser.',
   search_drive: 'Searching your Drive.',
   search_web: 'Searching the web.',
   answer_from_web: 'Looking that up.',
@@ -908,6 +1047,7 @@ function buildTools(ctx) {
     ...systemTools(ctx),
     ...smallTalkTools(),
     ...weatherTools(ctx),
+    ...messagingTools(ctx),
     ...personalTools(ctx),
     ...imageTools(ctx),
     ...taskTools(ctx),

@@ -111,7 +111,7 @@ global.fetch = async (...args) => {
     check('it is found, not written', r.found.length === 1 && !r.written, JSON.stringify({ found: r.found, written: r.written }));
     check('the page is cited', r.sources.some((s) => /example\.com/.test(s)), JSON.stringify(r.sources));
     check('the report says FOUND', /FOUND/.test(r.summary), r.summary);
-    check('and does not claim to have written it', !/WRITTEN BY ME/.test(r.summary), r.summary);
+    check('and does not claim to have written it', !/Written by me, not looked up/.test(r.summary), r.summary);
   }
 
   console.log('\nAn answer that is NOT on the page is not passed off as found:');
@@ -129,7 +129,7 @@ global.fetch = async (...args) => {
     check('the ungrounded page answer is rejected and nothing is claimed found',
       r.found.length === 0, JSON.stringify(r.found));
     check('it is reported as written instead', Boolean(r.written), JSON.stringify(r.written));
-    check('and labelled as unchecked', /WRITTEN BY ME/.test(r.summary), r.summary);
+    check('and labelled as unchecked', /Written by me, not looked up/.test(r.summary), r.summary);
   }
 
   console.log('\nWork is written, not searched for:');
@@ -144,7 +144,7 @@ global.fetch = async (...args) => {
     });
     check('nothing is claimed as found', r.found.length === 0, JSON.stringify(r.found));
     check('the work is produced', /Day 19/.test(r.written || ''), String(r.written));
-    check('it is labelled as mine', /WRITTEN BY ME/.test(r.summary), r.summary);
+    check('it is labelled as mine', /Written by me, not looked up/.test(r.summary), r.summary);
     check('the web was never searched',
       provider.calls.every((c) => !/SOURCE \d/.test(JSON.stringify(c.messages))),
       'it searched anyway');
@@ -166,7 +166,7 @@ global.fetch = async (...args) => {
     });
     check('the page is read and passed to the writing', sawPage, 'the page never reached the model');
     check('the answer is produced', Boolean(r.written), String(r.written));
-    check('and still labelled as written', /WRITTEN BY ME/.test(r.summary), r.summary);
+    check('and still labelled as written', /Written by me, not looked up/.test(r.summary), r.summary);
   }
 
   console.log('\nThe work is left somewhere:');

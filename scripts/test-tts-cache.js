@@ -28,8 +28,11 @@ const PHRASES = [
 (async () => {
   const tts = new PiperTts({ voice: config.get('tts.voice'), logger: quiet });
   if (!tts.status().ready) {
-    console.log('\nPiper is not installed; cannot test the cache.\n');
-    process.exit(1);
+    // Skipped, not failed. Piper is the fallback engine and the app speaks
+    // with Kokoro, so a machine without it is a normal machine — exiting
+    // non-zero here reported a healthy setup as a broken one.
+    console.log('\nPiper is not installed; skipping the cache test.\n');
+    process.exit(0);
   }
 
   await tts.start();

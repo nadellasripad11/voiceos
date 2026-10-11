@@ -95,6 +95,23 @@ function killNotepad() {
     process.exit(1);
   }
 
+  // Focus cannot always be taken: Windows will not hand it over while the
+  // user is typing somewhere else, and this runs on someone's actual desktop.
+  // When that happens the guard below refuses to send keystrokes, which is it
+  // working correctly — so this is a skip, not four failures that say nothing
+  // about the code.
+  await b.focusWindow(hwnd);
+  await sleep(600);
+  {
+    const fg = await b.foregroundWindow();
+    if (!fg || !/^notepad$/i.test(fg.process)) {
+      console.log(`\n  skip  could not take focus; it is on ${fg ? fg.process : 'another window'}.`);
+      console.log('        Run this with no other window in use to exercise key injection.');
+      console.log(`\n${pass} passed, ${fail} failed\n`);
+      process.exit(fail > 0 ? 1 : 0);
+    }
+  }
+
   await check('focus our scratch Notepad', async () => {
     await b.focusWindow(hwnd);
     await sleep(600);

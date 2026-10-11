@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en" data-state="idle" data-view="home">
+<head>
+  <meta charset="utf-8" />
+  <!-- Same lockdown as every other window here: nothing loads from anywhere
+       but this folder. The console renders text that came off the web, so it
+       is the last window that should be allowed to fetch anything. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src data:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>J.A.R.V.I.S.</title>
+  <link rel="stylesheet" href="console.css" />
+</head>
+<body>
+
+
+<!-- The frame is ours, so the top strip drags the window. -->
+<div class="dragbar"></div>
+<div class="winctl">
+  <button id="winMin" title="Minimise" aria-label="Minimise"><svg viewBox="0 0 10 10"><path d="M1.5 5h7" /></svg></button>
+  <button id="winMax" title="Maximise" aria-label="Maximise"><svg viewBox="0 0 10 10"><rect x="1.8" y="1.8" width="6.4" height="6.4" /></svg></button>
+  <button id="winClose" class="danger" title="Close" aria-label="Close"><svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2l-6 6" /></svg></button>
+</div>
+
+<!--
+  The stage is drawn at 1672 x 941 — the size of the design it copies — and
+  scaled to fit the window. Positions below are that design's, in pixels, so
+  the proportions hold at any window size instead of drifting apart.
+-->
+<main class="stage" id="stage">
+
+  <!-- Ink smoke, drawn once by scripts/render-scene-art.js. It is larger than
+       the stage so a window that is not 16:9 still has smoke in its edges. -->
+  <img class="smoke" id="smoke" src="art/smoke.webp" alt="" draggable="false" />
+
+  <!-- ===== the centre: line, rings, orb, satellites ===== -->
+  <div class="axis" aria-hidden="true">
+    <svg viewBox="0 0 1672 941" class="axis-svg">
+      <line class="axis-line" x1="836" y1="0" x2="836" y2="941" />
+      <g class="axis-dots">
+        <circle cx="836" cy="45" r="4" />
+        <circle cx="836" cy="79" r="4.5" />
+        <circle cx="836" cy="112" r="1.6" />
+        <circle cx="836" cy="137" r="1.2" />
+        <circle cx="836" cy="162" r="3.6" />
+        <circle cx="836" cy="207" r="5.2" />
+        <circle cx="836" cy="232" r="1.4" />
+        <circle cx="836" cy="620" r="1.4" />
+        <circle cx="836" cy="646" r="5.2" />
+        <circle cx="836" cy="691" r="3.6" />
+        <circle cx="836" cy="716" r="1.4" />
+      </g>
+      <circle class="ring ring-outer" cx="836" cy="425" r="265" />
+      <circle class="ring ring-inner" cx="836" cy="425" r="218" />
+      <circle class="ring ring-ticks" cx="836" cy="425" r="232" />
+      <circle class="ring ring-level" id="levelRing" cx="836" cy="425" r="190" />
+
+      <!-- the light beam either side of the orb -->
+      <defs>
+        <linearGradient id="beamL" x1="0" x2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity="0" />
+          <stop offset="0.65" stop-color="#e9f2ff" stop-opacity="0.7" />
+          <stop offset="1" stop-color="#ffffff" stop-opacity="1" />
+        </linearGradient>
+        <linearGradient id="beamR" x1="1" x2="0">
+          <stop offset="0" stop-color="#fff" stop-opacity="0" />
+          <stop offset="0.65" stop-color="#e9f2ff" stop-opacity="0.7" />
+          <stop offset="1" stop-color="#ffffff" stop-opacity="1" />
+        </linearGradient>
+      </defs>
+      <rect class="beam" x="300" y="423.6" width="370" height="2.8" fill="url(#beamL)" />
+      <rect class="beam" x="1002" y="423.6" width="300" height="2.8" fill="url(#beamR)" />
+
+      <!-- satellites: small dark bodies, two of them with their own orbits -->
+      <g class="sat-orbits">
+        <circle cx="522" cy="597" r="50" />
+        <circle cx="1152" cy="518" r="45" />
+        <path d="M1004 600 a 34 34 0 0 1 22 52" />
+      </g>
+    </svg>
+    <i class="sat" data-x="630" data-y="238" data-r="16"></i>
+    <i class="sat" data-x="522" data-y="597" data-r="21"></i>
+    <i class="sat" data-x="1152" data-y="518" data-r="18"></i>
+    <i class="sat" data-x="1112" data-y="620" data-r="6"></i>
+    <i class="sat" data-x="1158" data-y="640" data-r="7"></i>
+    <i class="sat" data-x="375" data-y="320" data-r="6"></i>
+    <i class="sat" data-x="953" data-y="686" data-r="3.5"></i>
+    <i class="sat" data-x="966" data-y="92" data-r="3"></i>
+    <i class="sat" data-x="1215" data-y="441" data-r="3.5"></i>
+    <i class="sat" data-x="430" data-y="552" data-r="2.5"></i>
+  </div>
+
+  <!-- The inside of the orb turns slowly; the canvas over it draws the live
+       rim, which is the part that answers the microphone. -->
+  <div class="orb-core"><img src="art/core.webp" alt="" draggable="false" /></div>
+  <canvas id="orb" class="orb" width="520" height="520" aria-hidden="true"></canvas>
+
+  <!-- ===== top left: name ===== -->
+  <header class="brand">
+    <i class="brand-ring"></i>
+    <div>
+      <div class="brand-name">J.A.R.V.I.S.</div>
+      <div class="brand-sub">Just a rather very intelligent system</div>
+    </div>
+  </header>
+
+  <!-- ===== the five phases of a request ===== -->
+  <ol class="phases" id="phases">
+    <li data-phase="listening">Listening</li>
+    <li data-phase="analysing">Analysing</li>
+    <li data-phase="reasoning">Reasoning</li>
+    <li data-phase="planning">Planning</li>
+    <li data-phase="acting">Acting</li>
+  </ol>
+
+  <!-- ===== left: greeting and navigation ===== -->
+  <section class="hello">
+    <h1 class="greeting" id="greeting">Good<br />evening.</h1>
+    <p class="motto"><span>Think</span><span>Plan</span><span>Create</span><span>Execute</span></p>
+    <i class="rule"></i>
+  </section>
+
+  <nav class="nav" aria-label="Sections">
+    <button class="nav-item is-active" data-view="home">
+      <svg viewBox="0 0 24 24" class="ico-home"><circle cx="12" cy="12" r="7.2" /></svg>
+      <span>Home</span>
+    </button>
+    <button class="nav-item" data-view="conversations">
+      <svg viewBox="0 0 24 24"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 17H10l-4.5 3.2V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5z" /><path d="M8.5 11.3h.01M12 11.3h.01M15.5 11.3h.01" /></svg>
+      <span>Conversations</span><i class="count" id="logCount"></i>
+    </button>
+    <button class="nav-item" data-view="tasks">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8.5 12.2l2.4 2.4 4.8-5" /></svg>
+      <span>Tasks</span><i class="count" id="taskCount"></i>
+    </button>
+    <button class="nav-item" data-view="knowledge">
+      <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.5" ry="2.8" /><path d="M4.5 6v12c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8V6" /><path d="M4.5 12c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8" /></svg>
+      <span>Knowledge</span>
+    </button>
+    <button class="nav-item" data-view="systems">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="6.5" r="2.6" /><circle cx="6.5" cy="16.5" r="2.6" /><circle cx="17.5" cy="16.5" r="2.6" /><path d="M10.7 8.8l-2.9 5.3M13.3 8.8l2.9 5.3M9.1 16.5h5.8" /></svg>
+      <span>Systems</span>
+    </button>
+    <button class="nav-item" data-view="environment">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.6" /></svg>
+      <span>Environment</span><i class="count alert-count" id="securityBadge" hidden>!</i>
+    </button>
+  </nav>
+
+  <!-- ===== bottom left: what is moving right now ===== -->
+  <article class="glass status-card">
+    <h3 class="micro">System status</h3>
+    <canvas id="statusWave" class="status-wave" width="490" height="170" aria-hidden="true"></canvas>
+    <ul class="lights" id="lights">
+      <li data-light="processing">Processing</li>
+      <li data-light="synthesis">Synthesis</li>
+      <li data-light="memory">Memory</li>
+      <li data-light="connections">Connections</li>
+      <li data-light="optimisation">Optimisation</li>
+    </ul>
+  </article>
+
+  <!-- ===== top right: time, weather, controls ===== -->
+  <header class="clock">
+    <div class="clock-date" id="clockDate">—</div>
+    <div class="clock-time" id="clockTime">--:--</div>
+    <div class="clock-sky" id="clockSky">&nbsp;</div>
+  </header>
+  <i class="clock-rule"></i>
+  <button class="avatar" id="avatar" title="Home" aria-label="Home"></button>
+  <div class="tools">
+    <button id="btnSearch" title="Ask" aria-label="Ask">
+      <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.3 15.3L20 20" /></svg>
+    </button>
+    <button id="btnAlerts" title="Security" aria-label="Security">
+      <svg viewBox="0 0 24 24"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.8H5z" /><path d="M10 20.5a2.2 2.2 0 0 0 4 0" /></svg>
+      <i class="dot-badge" id="alertDot" hidden></i>
+    </button>
+    <button id="btnSettings" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 2.8l1.6 2.3 2.7-.6.6 2.7 2.3 1.6-1.4 2.4 1.4 2.4-2.3 1.6-.6 2.7-2.7-.6L12 21.2l-1.6-2.3-2.7.6-.6-2.7-2.3-1.6L6.2 12 4.8 9.6l2.3-1.6.6-2.7 2.7.6z" /></svg>
+    </button>
+  </div>
+
+  <!-- ===== right: home cards ===== -->
+  <section class="right home-only">
+    <article class="glass voice-card">
+      <canvas id="voiceWave" class="voice-wave" width="580" height="140" aria-hidden="true"></canvas>
+      <button class="voice-btn" id="voiceBtn" title="Speak" aria-label="Speak"><i></i></button>
+      <div class="voice-text">
+        <div class="voice-title" id="voiceTitle">I'm listening..</div>
+        <div class="voice-sub" id="voiceSub">Speak, type, or share a thought.</div>
+      </div>
+    </article>
+
+    <article class="glass actions-card">
+      <button class="action" data-ask="Summarise my day">
+        <svg viewBox="0 0 24 24"><path d="M6.5 3.5h8l4 4v13h-12z" /><path d="M14.5 3.5v4h4M9.5 11.5h6M9.5 14.5h6M9.5 17.5h4" /></svg>
+        <span>Summarise my day</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6" /></svg>
+      </button>
+      <button class="action" data-ask="What do I have tomorrow, and what is due?">
+        <svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2" /><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" /><path d="M8 13.5h2M11 13.5h2M14 13.5h2M8 16.5h2M11 16.5h2" /></svg>
+        <span>Plan tomorrow</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6" /></svg>
+      </button>
+      <button class="action" data-fill="Research ">
+        <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.3 15.3L20 20" /></svg>
+        <span>Research this</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6" /></svg>
+      </button>
+      <button class="action" data-fill="Write ">
+        <svg viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5M6.3 6.3l2.4 2.4M15.3 15.3l2.4 2.4M17.7 6.3l-2.4 2.4M8.7 15.3l-2.4 2.4" /></svg>
+        <span>Create something</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6" /></svg>
+      </button>
+    </article>
+
+    <article class="glass systems-card">
+      <i class="mini-orb"></i>
+      <div class="systems-body">
+        <div class="systems-title" id="systemsTitle">Systems online</div>
+        <ul class="systems" id="systemsList">
+          <li data-sys="language"><span>Language</span><i></i></li>
+          <li data-sys="voice"><span>Voice</span><i></i></li>
+          <li data-sys="hearing"><span>Hearing</span><i></i></li>
+          <li data-sys="tools"><span>Tools</span><i></i></li>
+          <li data-sys="memory"><span>Memory</span><i></i></li>
+        </ul>
+      </div>
+    </article>
+  </section>
+
+  <!-- ===== right: every other view, in one tall sheet ===== -->
+  <section class="glass sheet" id="sheet">
+    <header class="sheet-head">
+      <h3 class="micro" id="sheetTitle">Conversations</h3>
+      <button class="sheet-close" id="sheetClose" aria-label="Back to home"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+    </header>
+
+    <div class="pane" data-pane="conversations">
+      <ol class="log" id="logList"></ol>
+      <p class="empty" id="logEmpty">Nothing said yet. Say "hey jarvis", or type below.</p>
+    </div>
+
+    <div class="pane" data-pane="tasks">
+      <ul class="tiles">
+        <li><b id="mTasks">0</b><span>things done</span></li>
+        <li><b id="mAsked">0</b><span>you asked</span></li>
+        <li><b id="mSaved">0m</b><span>time saved</span></li>
+        <li><b id="mFast">—</b><span>typical reply</span></li>
+      </ul>
+      <ul class="tasks" id="taskList"></ul>
+      <p class="empty" id="tasksEmpty">Nothing running.</p>
+    </div>
+
+    <div class="pane" data-pane="knowledge">
+      <ul class="found" id="foundList"></ul>
+      <p class="empty" id="foundEmpty">Nothing cited yet. Sources from searches, mail and Canvas appear here.</p>
+    </div>
+
+    <div class="pane" data-pane="systems">
+      <ul class="vitals" id="vitalsList"></ul>
+      <p class="empty" id="vitalsEmpty">Waiting for the app.</p>
+    </div>
+
+    <div class="pane" data-pane="environment">
+      <ul class="vitals" id="envList"></ul>
+      <h4 class="micro pane-sub">Security</h4>
+      <ol class="security" id="securityList"></ol>
+      <p class="empty" id="securityEmpty">Nothing has tried to give instructions. Text from the web and your inbox is read as data, never as commands.</p>
+    </div>
+  </section>
+
+  <!-- ===== bottom centre: the conversation itself ===== -->
+  <section class="prompt">
+    <div class="prompt-kicker" id="kicker">Good evening.</div>
+    <div class="prompt-line" id="promptLine">How can I help you today?</div>
+    <div class="caption" id="coreCaption" hidden></div>
+    <form class="ask" id="askForm" autocomplete="off">
+      <button type="button" class="ask-mic" id="askMic" title="Speak" aria-label="Speak">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3" /><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5v3" /></svg>
+      </button>
+      <input id="askInput" type="text" placeholder="Speak or type a command..." spellcheck="false" />
+      <button type="submit" class="ask-send" id="askSend" title="Send" aria-label="Send">
+        <svg viewBox="0 0 24 24"><path d="M6 12h11.5M13 7.5l4.5 4.5-4.5 4.5" /></svg>
+      </button>
+    </form>
+  </section>
+
+  <!-- ===== bottom right ===== -->
+  <aside class="tagline">
+    <span>A calmer</span><span>brighter</span><span>more capable</span><span>you</span>
+    <i class="rule"></i>
+  </aside>
+
+  <!-- what it is on: brain and state, under the orb, small -->
+  <div class="brain-chip" id="brainChip" title="The model answering right now"></div>
+</main>
+
+<!-- Asks before anything that sends, buys, books or changes something.
+     Without this the console had no way to answer, and every such action
+     waited two minutes and was quietly declined. -->
+<div class="confirm glass" id="confirmCard" role="alertdialog" aria-labelledby="confirmTitle" hidden>
+  <div class="micro">Needs your OK</div>
+  <div class="confirm-title" id="confirmTitle"></div>
+  <div class="confirm-detail" id="confirmDetail"></div>
+  <div class="confirm-buttons">
+    <button class="confirm-no" id="confirmNo">Not now</button>
+    <button class="confirm-yes" id="confirmYes">Go ahead</button>
+  </div>
+</div>
+
+<!-- Slides in when a page tries to give instructions. -->
+<div class="alert glass" id="securityAlert" hidden>
+  <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z" /><path d="M12 8v5M12 16v.5" /></svg>
+  <div>
+    <strong>Content tried to give instructions</strong>
+    <p id="securityText"></p>
+  </div>
+  <button id="securityDismiss" aria-label="Dismiss">&times;</button>
+</div>
+
+<script src="audio.js"></script>
+<script src="scene.js"></script>
+<script src="console.js"></script>
+</body>
+</html>

@@ -12,7 +12,7 @@
 const { Agent, matchIntent } = require('../src/core/agent/agent');
 const { buildTools } = require('../src/core/agent/tools');
 const { getBridge } = require('../src/core/native/bridge');
-const { createProvider } = require('../src/core/llm/provider');
+const { createBrain } = require('../src/core/llm');
 const { config } = require('../src/core/config');
 const { ensureDirs } = require('../src/core/paths');
 
@@ -41,10 +41,10 @@ const quiet = { info() {}, warn() {}, error() {}, debug() {} };
   const bridge = getBridge({ logger: quiet });
   await bridge.start();
 
-  const provider = createProvider(config.get('llm.provider'), {
-    baseUrl: config.get('llm.baseUrl'),
-    logger: quiet
-  });
+  // The brain the app would build, keys and fallback and all. Constructing
+  // one by hand here is how this test came to report "No groq API key is set"
+  // on a machine that had one.
+  const provider = createBrain({ config, logger: quiet });
 
   const agent = new Agent({
     provider,

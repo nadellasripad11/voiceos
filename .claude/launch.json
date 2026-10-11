@@ -4,14 +4,38 @@
     {
       "name": "renderer",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["scripts/preview-server.js", "--port", "4321", "--root", "src/renderer"],
+      "runtimeArgs": [
+        "scripts/preview-server.js",
+        "--port",
+        "4321",
+        "--root",
+        "src/renderer"
+      ],
       "port": 4321
     },
     {
       "name": "website",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["scripts/preview-server.js", "--port", "4322", "--root", "website"],
+      "runtimeArgs": [
+        "scripts/preview-server.js",
+        "--port",
+        "4322",
+        "--root",
+        "website"
+      ],
       "port": 4322
+    },
+    {
+      "name": "scene-art",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/preview-server.js",
+        "--port",
+        "4323",
+        "--root",
+        "scripts/scene-art"
+      ],
+      "port": 4323
     }
   ]
 }

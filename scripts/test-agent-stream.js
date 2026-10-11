@@ -12,7 +12,7 @@ const { Agent } = require('../src/core/agent/agent');
 const { ConnectionManager } = require('../src/core/connect/manager');
 const { getBridge } = require('../src/core/native/bridge');
 const { createProvider } = require('../src/core/llm/provider');
-const { PiperTts } = require('../src/core/tts/piper');
+const { createTts } = require('../src/core/tts');
 const { SpeechStream } = require('../src/core/tts/stream');
 const { config } = require('../src/core/config');
 const { paths } = require('../src/core/paths');
@@ -42,8 +42,25 @@ const check = (n, c, d) => {
   // weights but not the tool prompt, which is where the first-question cost is.
 
   const connections = new ConnectionManager({ config, bridge, browser: null, logger: quiet, credentials: creds });
+
+  // This test drives Ollama on purpose, so it must ask for Ollama's model.
+  // llm.model and llm.agentModel name whatever the primary brain uses, and a
+  // hosted model id gets a 404 from a local server — which is the whole
+  // reason the fallback pair carries its own model name.
+  const localModel = config.get('llm.fallbackModel') || config.get('llm.model');
+  const localConfig = {
+    ...config,
+    get: (key, fallback) => (
+      key === 'llm.model' || key === 'llm.agentModel'
+        ? localModel
+        : config.get(key, fallback)
+    ),
+    set: (...args) => config.set(...args),
+    all: () => config.all()
+  };
+
   const agent = new Agent({
-    provider, config, bridge, connections, logger: quiet,
+    provider, config: localConfig, bridge, connections, logger: quiet,
     requestConfirmation: async () => false
   });
 
@@ -86,7 +103,20 @@ const check = (n, c, d) => {
   console.log(`        "${result.answer.replace(/\s+/g, ' ').slice(0, 100)}…"`);
 
   console.log('\nSpeaking it as it streams:');
-  const tts = new PiperTts({ voice: config.get('tts.voice'), logger: quiet });
+  // Whatever the app would speak with on this machine. Constructing Piper
+  // directly here reported "0 clips" on a machine that had Kokoro and no
+  // Piper, which is a fact about the test rather than about the code.
+  const { tts, engine, reason } = createTts({ config, logger: quiet });
+  if (!tts) {
+    console.log(`
+  skip  no voice engine installed (${reason})
+`);
+    console.log(`
+${pass} passed, ${fail} failed
+`);
+    process.exit(fail > 0 ? 1 : 0);
+  }
+  console.log(`  using ${engine}`);
   await tts.prewarm();
 
   const clips = [];

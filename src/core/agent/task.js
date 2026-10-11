@@ -52,6 +52,9 @@ function isProduction(goal) {
   return false;
 }
 
+/** How the console recognises the label, to show it as a note. */
+const WRITTEN_NOTE = '(Written by me, not looked up — check anything that matters.)';
+
 /** The shape of a finished piece of work. */
 function report({ goal, found = [], written = null, file = null, steps = [], sources = [] }) {
   const lines = [];
@@ -60,8 +63,10 @@ function report({ goal, found = [], written = null, file = null, steps = [], sou
   }
   if (written) {
     // Labelled, always. This is the sentence that stops a generated answer
-    // being mistaken for a researched one.
-    lines.push('', 'WRITTEN BY ME (not found anywhere — check it)', written);
+    // being mistaken for a researched one. After the text rather than in
+    // capitals before it: the label is a footnote, and leading with it made
+    // every answer — a poem included — open with a warning.
+    lines.push('', written, '', WRITTEN_NOTE);
   }
   if (file) lines.push('', `Saved to ${file}`);
   if (sources.length) lines.push('', 'SOURCES', ...sources.map((s) => `  ${s}`));

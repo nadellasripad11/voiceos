@@ -15,6 +15,7 @@ const path = require('path');
 const readline = require('readline');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { backgroundPriority } = require('../priority');
 const { paths } = require('../paths');
 
 function findPiperExe() {
@@ -210,6 +211,7 @@ class PiperTts {
         '--sentence_silence', '0.1',
         '--quiet'
       ], { windowsHide: true, cwd: path.dirname(exe) });
+      backgroundPriority(proc.pid);
 
       // One line of stdout per synthesized utterance: the path it wrote.
       const rl = readline.createInterface({ input: proc.stdout });
@@ -299,10 +301,36 @@ class PiperTts {
       if (hit) return { path: hit, ms: 0, voice: this.voice, cached: true };
     }
 
-    if (!this.proc) await this.start();
-
     const started = Date.now();
-    const file = await new Promise((resolve, reject) => {
+
+    // Piper dies occasionally on this machine — the log has it exiting with
+    // 3221226505, the same out-of-memory abort whisper gives. It already
+    // restarts on the next call, so the lasting damage was only the sentence
+    // in flight: the reply skipped a line and nothing said why.
+    //
+    // One retry covers that. More would risk saying a sentence twice when the
+    // cause is something other than the process going away.
+    let file;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!this.proc) await this.start();
+      try {
+        file = await this.render(clean, timeoutMs);
+        break;
+      } catch (err) {
+        // Only worth retrying when the process went out from under it. A
+        // timeout means it is alive and slow, and asking again makes it worse.
+        const died = !this.proc || /exited/i.test(err.message);
+        if (attempt === 1 || !died) throw err;
+        this.logger.warn?.('[piper] died mid-sentence; restarting and saying it again');
+      }
+    }
+
+    return { path: file, ms: Date.now() - started, voice: this.voice };
+  }
+
+  /** One pass through the resident process. */
+  render(clean, timeoutMs) {
+    return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const i = this.pending.findIndex((p) => p.timer === timer);
         if (i >= 0) this.pending.splice(i, 1);
@@ -317,8 +345,6 @@ class PiperTts {
 
       this.proc.stdin.write(clean + '\n');
     });
-
-    return { path: file, ms: Date.now() - started, voice: this.voice };
   }
 
   /** Renders and returns the audio inline, for handing straight to a renderer. */
@@ -393,8 +419,17 @@ function speakableSummary(text, { maxChars = 320 } = {}) {
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/__([^_]+)__/g, '$1')
     .replace(/(^|[\s(])[*_]([^*_\s][^*_]*)[*_](?=[\s).,!?;:]|$)/g, '$1$2')
-    .replace(/^[\s>*\-#]+/gm, '')
+    // A list item is a sentence when it is spoken. Stripping the bullet and
+    // joining the lines ran six news items together into one breathless
+    // paragraph; ending each with a full stop gives the voice somewhere to
+    // pause, and gives the sentence splitter a boundary to start speaking at.
+    .replace(/^[\s]*[-*•]\s+/gm, (m, offset) => (offset === 0 ? '' : '. '))
+    .replace(/^[\s]*\d+[.)]\s+/gm, (m, offset) => (offset === 0 ? '' : '. '))
+    .replace(/^[\s>#]+/gm, '')
     .replace(/\s+/g, ' ')
+    // Those inserted stops can land next to one that was already there.
+    .replace(/([.!?:])\s*\.\s*/g, '$1 ')
+    .replace(/\s+([.,!?;:])/g, '$1')
     .trim();
 
   if (out.length <= maxChars) return out;

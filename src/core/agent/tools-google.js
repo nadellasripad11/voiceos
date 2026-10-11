@@ -103,9 +103,10 @@ const googleTools = (ctx) => [
   {
     name: 'my_day',
     appId: 'system',
-    description: 'What the user has on today: calendar, what is due, and new mail. Use for "what do I have today", "what is going on today", "brief me".',
-    parameters: obj({}),
-    run: async () => {
+    description: 'What the user has on today (calendar, what is due, new mail) or tomorrow (calendar and what is due). Use for "what do I have today", "brief me", "plan tomorrow".',
+    parameters: obj({ day: str('"today" (default) or "tomorrow"') }),
+    run: async ({ day = 'today' } = {}) => {
+      const tomorrow = day === 'tomorrow';
       // The three sections are independent, so they go at once: in sequence
       // this would cost the sum of them and together it costs the slowest.
       const tools = googleTools(ctx);
@@ -119,10 +120,11 @@ const googleTools = (ctx) => [
         }
       };
 
+      // Tomorrow's plan has no use for today's unread mail.
       const [events, work, mail] = await Promise.all([
-        safely('list_events', { days: 1, limit: 10 }),
+        safely('list_events', { day: tomorrow ? 'tomorrow' : 'today', limit: 10 }),
         safely('list_coursework', { limit: 6 }),
-        safely('list_email', { query: 'is:unread in:inbox', limit: 6 })
+        tomorrow ? null : safely('list_email', { query: 'is:unread in:inbox', limit: 6 })
       ]);
 
       const sections = [];
@@ -174,7 +176,10 @@ const googleTools = (ctx) => [
       const list = counts.length > 1
         ? `${counts.slice(0, -1).join(', ')} and ${counts[counts.length - 1]}`
         : counts[0] || '';
-      const spoken = [list ? `${list}.` : 'Your day looks clear.', headline].filter(Boolean).join(' ');
+      const spoken = [
+        list ? `${tomorrow ? 'Tomorrow: ' : ''}${list}.` : tomorrow ? 'Tomorrow looks clear.' : 'Your day looks clear.',
+        headline
+      ].filter(Boolean).join(' ');
 
       return { ok: true, summary: sections.join('\n\n'), spoken, found: cards.slice(0, 8) };
     }
@@ -280,20 +285,28 @@ const googleTools = (ctx) => [
     appId: 'google-calendar',
     description: 'See what is on the calendar. Use for "what\'s on today", "am I free tomorrow", "next meeting".',
     parameters: obj({
-      days: num('How many days ahead, default 1'),
+      day: str('"today" or "tomorrow", for one calendar day'),
+      days: num('Otherwise, how many days ahead, default 1'),
       limit: num('Max events, default 10')
     }),
-    run: async ({ days = 1, limit = 10 } = {}) => {
+    run: async ({ day = null, days = 1, limit = 10 } = {}) => {
+      // A named day is that calendar day. "Today" used to mean the next 24
+      // hours, so tonight's question about today listed tomorrow morning.
       const now = new Date();
-      const end = new Date(now.getTime() + Math.max(1, days) * 86400000);
+      const midnight = (offset) => { const d = new Date(now); d.setHours(24 * offset, 0, 0, 0); return d; };
+      const start = day === 'tomorrow' ? midnight(1) : now;
+      const end = day === 'tomorrow' ? midnight(2) : day === 'today' ? midnight(1)
+        : new Date(now.getTime() + Math.max(1, days) * 86400000);
       const data = await api(ctx, 'google-calendar',
         'https://www.googleapis.com/calendar/v3/calendars/primary/events' +
-        `?timeMin=${now.toISOString()}&timeMax=${end.toISOString()}` +
+        `?timeMin=${start.toISOString()}&timeMax=${end.toISOString()}` +
         `&singleEvents=true&orderBy=startTime&maxResults=${Math.min(25, limit)}`);
 
       const events = data.items || [];
       if (!events.length) {
-        return { ok: true, summary: days <= 1 ? 'Nothing on your calendar today.' : `Nothing in the next ${days} days.` };
+        const empty = day === 'tomorrow' ? 'Nothing on your calendar tomorrow.'
+          : day === 'today' || days <= 1 ? 'Nothing on your calendar today.' : `Nothing in the next ${days} days.`;
+        return { ok: true, summary: empty, spoken: empty };
       }
 
       const when = (e) => {

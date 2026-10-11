@@ -4,7 +4,10 @@
 const { createProvider } = require('../src/core/llm/provider');
 const { config } = require('../src/core/config');
 
-const model = config.get('llm.model');
+// This test drives the local engine on purpose, so it asks for the local
+// model. config.llm.model is whatever the primary brain uses, which is a
+// hosted model id that Ollama answers 404 to.
+const model = config.get('llm.fallbackModel') || config.get('llm.model');
 let pass = 0, fail = 0;
 const check = (n, c, d) => { if (c) { console.log(`  PASS  ${n}`); pass++; } else { console.log(`  FAIL  ${n}${d ? `\n        ${d}` : ''}`); fail++; } };
 

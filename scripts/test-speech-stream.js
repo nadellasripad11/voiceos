@@ -8,7 +8,7 @@
  * Uses a fake synthesizer with deliberately uneven delays, so a race in the
  * queue shows up as clips arriving out of order rather than as a flaky timing.
  */
-const { SpeechStream, completeLength } = require('../src/core/tts/stream');
+const { SpeechStream, completeLength, firstClipLength } = require('../src/core/tts/stream');
 
 let pass = 0, fail = 0;
 const check = (n, c, d) => {
@@ -177,6 +177,36 @@ async function typeIn(stream, text, step = 3) {
     check('backticks and asterisks are stripped',
       !all.includes('`') && !all.includes('**'), JSON.stringify(all));
     check('a URL becomes "a link"', all.includes('a link'), JSON.stringify(all));
+  }
+
+  console.log('\nThe first clip is the only one the user waits in silence for:');
+  {
+    // Every later clip is synthesized while the previous one plays, so its
+    // length is free. The first is pure waiting, and synthesis here runs at
+    // roughly realtime: each second of audio in it is a second of nothing
+    // happening. Shortest usable fragment wins, even mid-sentence.
+    const long = 'The capital of France is Paris, a city known for its art, fashion and cuisine, and the seat of government for centuries.';
+    const first = long.slice(0, firstClipLength(long, 24));
+    check('it breaks at the first clause, not the full stop',
+      first === 'The capital of France is Paris,', JSON.stringify(first));
+    check('which is a fraction of the whole sentence',
+      first.length < long.length / 3, first.length + ' of ' + long.length);
+
+    // Short clauses are passed over until one is worth a synthesis call:
+    // "Yes," and "Yes, I can do that," are both under the floor, so the first
+    // clip runs on to the full stop.
+    const stubby = 'Yes, I can do that, certainly. ';
+    check('short clauses are passed over for the next one',
+      stubby.slice(0, firstClipLength(stubby, 24)) === 'Yes, I can do that, certainly.',
+      JSON.stringify(stubby.slice(0, firstClipLength(stubby, 24))));
+    check('nothing is spoken before a long enough clause arrives',
+      firstClipLength('The capital of France', 24) === 0);
+
+    // Later clips must still take the longest complete run, or the reply comes
+    // out as a stutter of fragments.
+    check('later clips still take whole sentences',
+      completeLength('One. Two. Three. ') === 'One. Two. Three.'.length,
+      String(completeLength('One. Two. Three. ')));
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);

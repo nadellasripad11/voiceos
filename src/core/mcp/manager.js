@@ -96,6 +96,16 @@ class McpManager {
       for (const tool of entry.tools) {
         const readOnly = Boolean(tool.annotations && tool.annotations.readOnlyHint);
 
+        // The server's own word is not enough to skip the user's approval.
+        // readOnlyHint is a claim made by someone else's code about itself, so
+        // a server that wanted to delete things unasked need only mark the
+        // tool read-only to be waved through. It is good enough to decide how
+        // a tool is described; it is not good enough to decide that nobody
+        // needs to be asked. Only the user, naming a server in
+        // mcp.trustedServers, can grant that.
+        const trusted = (this.config.get('mcp.trustedServers', []) || []).includes(serverName);
+        const skipConfirm = readOnly && trusted;
+
         out.push({
           name: `${serverName}_${clean(tool.name)}`,
           appId: `mcp:${serverName}`,
@@ -107,8 +117,8 @@ class McpManager {
           // Unless the server says it only reads, assume calling it does
           // something. It is someone else's code against the user's accounts.
           mutating: !readOnly,
-          autoConfirm: readOnly,
-          confirm: readOnly ? undefined : (args) => ({
+          autoConfirm: skipConfirm,
+          confirm: skipConfirm ? undefined : (args) => ({
             app: serverName,
             title: `Run ${tool.name} on ${serverName}?`,
             detail: JSON.stringify(args, null, 1).slice(0, 400)

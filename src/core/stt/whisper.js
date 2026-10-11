@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const { backgroundPriority, workerThreads } = require('../priority');
 const { paths } = require('../paths');
 
 // Ordered by preference, not by whatever the directory walk happens to reach
@@ -76,7 +77,7 @@ class WhisperEngine {
   } = {}) {
     this.modelName = model;
     this.language = language;
-    this.threads = threads || Math.max(1, Math.min(8, os.cpus().length - 1));
+    this.threads = threads || workerThreads();
     this.translate = translate;
     this.beamSize = beamSize;
     this.bestOf = bestOf;
@@ -157,6 +158,7 @@ class WhisperEngine {
     const started = Date.now();
     const stderr = await new Promise((resolve, reject) => {
       const child = spawn(exe, args, { windowsHide: true });
+      backgroundPriority(child.pid);
       let err = '';
 
       child.stdout.on('data', (d) => {

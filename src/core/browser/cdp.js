@@ -3,9 +3,9 @@
  * Browser automation over the Chrome DevTools Protocol.
  *
  * Used for the services with no free API left — WhatsApp Web, X, LinkedIn — by
- * driving a browser the user is already signed into. Costs nothing and installs
- * nothing: Node 24 ships a global WebSocket, and Chrome and Edge are already on
- * the machine, so there is no Playwright download and no hosted connector.
+ * driving a browser the user is already signed into. Chrome and Edge are
+ * already on the machine, so there is no Playwright download and no hosted
+ * connector.
  *
  * Sessions live in a dedicated VoiceOS browser profile rather than the user's
  * everyday one. They sign in once per service and it persists, while their
@@ -16,6 +16,26 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { paths } = require('../paths');
+
+/**
+ * A WebSocket that exists wherever this runs.
+ *
+ * Standalone Node 24 has a global one, which is why every test of this file
+ * passed. The app does not run on standalone Node: Electron 33 bundles Node
+ * 20.18, where the global is undefined — so in the app every CDP call failed
+ * with "WebSocket is not defined", taking Canvas and the Spotify player with
+ * it, while the tests stayed green.
+ *
+ * The global is preferred when present so nothing changes for the tests; ws
+ * fills in otherwise. Hand-rolling one was the alternative, and CDP sends page
+ * text in frames well over 64KB, which is exactly where a hand-rolled
+ * implementation goes subtly wrong.
+ */
+const WebSocketImpl = (() => {
+  if (typeof WebSocket !== 'undefined') return WebSocket;
+  try { return require('ws'); }
+  catch { return null; }
+})();
 
 const CHROME_CANDIDATES = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -61,7 +81,10 @@ class CdpSession {
 
   connect() {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(this.wsUrl);
+      if (!WebSocketImpl) {
+        return reject(new Error('No WebSocket available; run "npm install" to add ws.'));
+      }
+      const ws = new WebSocketImpl(this.wsUrl);
       const timer = setTimeout(() => reject(new Error('CDP connect timed out')), 15000);
 
       ws.addEventListener('open', () => {

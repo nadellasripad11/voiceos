@@ -16,12 +16,17 @@
     "site": "node website/serve.js",
     "dist": "electron-builder",
     "restart": "node scripts/restart.js",
-    "test": "node scripts/test-hotkeys.js && node scripts/test-speech-stream.js && node scripts/test-edit.js && node scripts/test-smalltalk.js && node scripts/test-coursework.js && node scripts/test-web.js && node scripts/test-natural.js && node scripts/test-music.js && node scripts/test-myday.js && node scripts/test-images.js && node scripts/test-mcp.js && node scripts/test-task.js && node scripts/test-fallback.js",
+    "test": "node scripts/test-hotkeys.js && node scripts/test-speech-stream.js && node scripts/test-edit.js && node scripts/test-smalltalk.js && node scripts/test-coursework.js && node scripts/test-web.js && node scripts/test-natural.js && node scripts/test-music.js && node scripts/test-myday.js && node scripts/test-images.js && node scripts/test-mcp.js && node scripts/test-task.js && node scripts/test-fallback.js && node scripts/test-move.js && node scripts/test-ambient.js && node scripts/test-untrusted.js && node scripts/test-relevant.js && node scripts/test-vad.js && node scripts/test-digest.js && node scripts/test-router-miss.js && node scripts/test-messaging.js && node scripts/test-followup.js && node scripts/test-cloud.js && node scripts/test-routes.js && node scripts/test-search.js && node scripts/test-browse.js",
     "test:live": "node scripts/test-kokoro.js && node scripts/test-wake.js && node scripts/test-tts-cache.js && node scripts/test-stream.js && node scripts/test-agent-stream.js && node scripts/test-bridge.js",
-    "bench": "node scripts/bench-latency.js"
+    "bench": "node scripts/bench-latency.js",
+    "test:all": "node scripts/test-all.js",
+    "art": "electron scripts/render-scene-art.js",
+    "bench:groq": "node scripts/bench-groq.js",
+    "bench:real": "node scripts/bench-latency-real.js"
   },
   "dependencies": {
-    "kokoro-js": "^1.2.1"
+    "kokoro-js": "^1.2.1",
+    "ws": "^8.22.0"
   },
   "optionalDependencies": {
     "uiohook-napi": "^1.5.4"

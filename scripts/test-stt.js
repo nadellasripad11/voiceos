@@ -14,6 +14,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { WhisperEngine } = require('../src/core/stt/whisper');
 const { paths, ensureDirs } = require('../src/core/paths');
+const { config } = require('../src/core/config');
 
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
@@ -54,7 +55,10 @@ function wordAccuracy(expected, actual) {
 
 (async () => {
   ensureDirs();
-  const model = opt('model', 'ggml-base.en.bin');
+  // Whatever the app is configured to use. Hardcoding a filename here meant
+  // this test failed the moment an unused model was cleaned off the disk,
+  // reporting a missing file as if speech recognition were broken.
+  const model = opt('model', config.get('stt.model'));
   const engine = new WhisperEngine({ model, language: 'en' });
 
   const status = engine.status();
