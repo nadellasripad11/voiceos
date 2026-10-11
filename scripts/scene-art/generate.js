@@ -234,19 +234,19 @@
       f.stroke();
     }
 
-    // Compose: a blurred copy underneath gives the smoke body and depth, the
-    // sharp copy on top gives it fibre.
+    // Compose: the smoke itself is a density field (soft masses that tear
+    // into wisps, like the reference); the traced fibres are only a faint
+    // layer of strands on top of it.
     const out = document.createElement('canvas');
     out.width = W; out.height = H;
     const o = out.getContext('2d');
-    o.filter = 'blur(26px)';
-    o.globalAlpha = 0.95;
+    o.imageSmoothingQuality = 'high';
+    o.drawImage(smokeField(W, H, cx, cy, noise), 0, 0, W, H);
+    o.filter = 'blur(10px)';
+    o.globalAlpha = 0.35;
     o.drawImage(fibres, 0, 0);
-    o.filter = 'blur(9px)';
-    o.globalAlpha = 0.55;
-    o.drawImage(fibres, 0, 0);
-    o.filter = 'blur(2.5px)';
-    o.globalAlpha = 0.5;
+    o.filter = 'blur(1.5px)';
+    o.globalAlpha = 0.32;
     o.drawImage(fibres, 0, 0);
     o.filter = 'none';
     o.globalAlpha = 1;
@@ -265,6 +265,62 @@
       o.fill();
     }
     return out;
+  }
+
+  /**
+   * Ink in water, pixel by pixel, at half resolution (it is soft anyway).
+   *
+   * Domain-warped noise gives the turbulent masses; its ridges give the thin
+   * torn wisps at their edges. Both are shaped into the arms by an angular
+   * mask that widens and bends with distance, and turn bluer near the orb.
+   */
+  function smokeField(W, H, cx, cy, noise) {
+    const S = 0.5;
+    const w = Math.round(W * S), h = Math.round(H * S);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    const px = img.data;
+    const warp = makeNoise(41);
+    const arms = ARMS.map((a) => ({ ...a, r: rad(a.a) }));
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const x = i / S, y = j / S;
+        const dx = x - cx, dy = y - cy;
+        const r = Math.hypot(dx, dy);
+        if (r < 120) continue;
+        // Warp first: everything that follows reads a twisted copy of space.
+        const qx = x + 140 * warp.fbm(x * 0.0022, y * 0.0022, 3);
+        const qy = y + 140 * warp.fbm(x * 0.0022 + 7.3, y * 0.0022 - 3.1, 3);
+        const th = Math.atan2(qy - cy, qx - cx);
+        let mask = 0;
+        for (const a of arms) {
+          const along = Math.min(1, (r - 150) / a.len);
+          let d = th - (a.r + a.bend * along * 1.6);
+          d = Math.atan2(Math.sin(d), Math.cos(d));
+          const width = rad(a.spread * 0.7 + 5 + along * 15);
+          const fade = Math.pow(Math.max(0, 1 - (r - 150) / (a.len * 0.95)), 2);
+          mask += Math.exp(-(d * d) / (width * width)) * fade * a.weight;
+        }
+        if (mask < 0.01) continue;
+        const cloud = 0.5 + 0.5 * noise.fbm(qx * 0.0045, qy * 0.0045, 5);
+        const ridge = Math.pow(1 - Math.abs(noise.fbm(qx * 0.007 + 11, qy * 0.007, 4)), 6);
+        // Near the orb the ink is dense; further out it is mostly wisps.
+        const near = Math.max(0, 1 - (r - 140) / 330);
+        let dens = mask * (Math.pow(cloud, 2.6) * (0.35 + near * 1.6) + ridge * 0.55);
+        dens = Math.min(1, dens * 1.7);
+        if (dens < 0.004) continue;
+        const blue = Math.min(1, near * 0.8 + ridge * 0.35) * (0.5 + 0.5 * cloud);
+        const k = (j * w + i) * 4;
+        px[k] = 12 + blue * 58;
+        px[k + 1] = 22 + blue * 92;
+        px[k + 2] = 46 + blue * 150;
+        px[k + 3] = Math.round(255 * Math.pow(dens, 1.15) * 0.92);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
   }
 
   /**
@@ -328,12 +384,38 @@
         x0.stroke();
       }
     }
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < 22; i++) {
       const a = rand() * Math.PI * 2;
       const d = R * (0.55 + Math.pow(rand(), 0.35) * 0.45);
       const nearRim = d / R;
       bolt(C + Math.cos(a) * d, C + Math.sin(a) * d, rand() * Math.PI * 2,
         20 + rand() * 45, 0.4 + rand() * 0.6, 0.08 + nearRim * nearRim * 0.5, 0);
+    }
+
+    // Plasma: thin bright ridges of warped noise, strongest toward the rim.
+    {
+      const pc = document.createElement('canvas');
+      pc.width = size; pc.height = size;
+      const pctx = pc.getContext('2d');
+      const img = pctx.createImageData(size, size);
+      const d = img.data;
+      const warp = makeNoise(57);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const rr = Math.hypot(x - C, y - C) / R;
+          if (rr > 1) continue;
+          const wx = x + 40 * warp.fbm(x * 0.008, y * 0.008, 3);
+          const wy = y + 40 * warp.fbm(x * 0.008 + 5, y * 0.008, 3);
+          const ridge = Math.pow(1 - Math.abs(noise.fbm(wx * 0.011, wy * 0.011, 4)), 16);
+          const haze = 0.5 + 0.5 * noise.fbm(wx * 0.004, wy * 0.004, 3);
+          const edge = Math.pow(Math.max(0, (rr - 0.25) / 0.75), 1.6);
+          const v = Math.min(1, ridge * (0.1 + edge * 0.75) + haze * edge * 0.08);
+          const k = (y * size + x) * 4;
+          d[k] = 120 + v * 110; d[k + 1] = 170 + v * 75; d[k + 2] = 255; d[k + 3] = Math.round(v * 255);
+        }
+      }
+      pctx.putImageData(img, 0, 0);
+      x0.drawImage(pc, 0, 0);
     }
 
     // Light pooled under the rim.
