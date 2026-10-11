@@ -128,8 +128,8 @@
         if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
       }
       const wide = pass === 0;
-      ctx.strokeStyle = wide ? `rgba(110, 165, 255, ${0.25 + energy * 0.2})` : `rgba(225, 240, 255, ${0.55 + energy * 0.35})`;
-      ctx.lineWidth = wide ? 9 : 1.1 + (3 - pass) * 0.4;
+      ctx.strokeStyle = wide ? `rgba(120, 175, 255, ${0.4 + energy * 0.2})` : `rgba(235, 245, 255, ${0.75 + energy * 0.25})`;
+      ctx.lineWidth = wide ? 16 : 2 + (3 - pass) * 0.7;
       ctx.stroke();
     }
 

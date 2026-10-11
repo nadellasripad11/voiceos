@@ -406,10 +406,13 @@
           if (rr > 1) continue;
           const wx = x + 40 * warp.fbm(x * 0.008, y * 0.008, 3);
           const wy = y + 40 * warp.fbm(x * 0.008 + 5, y * 0.008, 3);
-          const ridge = Math.pow(1 - Math.abs(noise.fbm(wx * 0.011, wy * 0.011, 4)), 16);
+          const ang = Math.atan2(wy - C, wx - C);
+          const swirl = ang * 2.2 + rr * 3.2 + 0.6 * warp.fbm(x * 0.006, y * 0.006, 2);
+          const ridge = Math.pow(1 - Math.abs(noise.fbm(Math.cos(swirl) * 2.4 + rr * 5, Math.sin(swirl) * 2.4 + rr * 1.5, 4)), 22);
+          const fine = Math.pow(1 - Math.abs(noise.fbm(wx * 0.02, wy * 0.02, 3)), 30);
           const haze = 0.5 + 0.5 * noise.fbm(wx * 0.004, wy * 0.004, 3);
-          const edge = Math.pow(Math.max(0, (rr - 0.25) / 0.75), 1.6);
-          const v = Math.min(1, ridge * (0.1 + edge * 0.75) + haze * edge * 0.08);
+          const edge = Math.pow(Math.max(0, (rr - 0.2) / 0.8), 2.2);
+          const v = Math.min(1, ridge * (0.03 + edge * 0.7) + fine * edge * 0.25 + haze * edge * 0.05);
           const k = (y * size + x) * 4;
           d[k] = 120 + v * 110; d[k + 1] = 170 + v * 75; d[k + 2] = 255; d[k + 3] = Math.round(v * 255);
         }
