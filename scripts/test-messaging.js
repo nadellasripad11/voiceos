@@ -65,25 +65,38 @@ const route = (text) => matchIntent(text, tools, config);
     const opened = [];
     const bridge = { openUrl: async (u) => opened.push(u) };
 
-    const known = await sendText({ to: 'maya', text: 'running 10 late', config: book, bridge, logger: quiet });
+    const known = await sendText({ to: 'maya', text: 'running 10 late', config: book, bridge, logger: quiet, handlerReady: async () => true });
     check('a known contact becomes an sms link', known.ok && /^sms:\+15550101234\?body=/.test(opened[0]), opened[0]);
     check('and it does not claim to have sent it',
       /press send/i.test(known.summary), known.summary);
 
     // A ten-digit number is how people write their own, and Phone Link wants
     // the country code, so it is added rather than passed through short.
-    const spoken = await sendText({ to: '555 010 9999', text: 'hi', config: book, bridge, logger: quiet });
+    const spoken = await sendText({ to: '555 010 9999', text: 'hi', config: book, bridge, logger: quiet, handlerReady: async () => true });
     check('a spoken number is tidied and given its country code',
       spoken.ok && opened[1] === 'sms:+15550109999?body=hi', opened[1]);
 
-    const full = await sendText({ to: '+44 7700 900123', text: 'hi', config: book, bridge, logger: quiet });
+    const full = await sendText({ to: '+44 7700 900123', text: 'hi', config: book, bridge, logger: quiet, handlerReady: async () => true });
     check('a number that already has one is left alone',
       full.ok && opened[2] === 'sms:+447700900123?body=hi', opened[2]);
 
-    const unknown = await sendText({ to: 'dave', text: 'hi', config: book, bridge, logger: quiet });
+    const unknown = await sendText({ to: 'dave', text: 'hi', config: book, bridge, logger: quiet, handlerReady: async () => true });
     check('an unknown name is refused rather than guessed at', unknown.ok === false);
     check('and it says what to do about it',
       /contacts|number|whatsapp/i.test(unknown.summary), unknown.summary);
+  }
+
+  console.log('\nWhen nothing on the PC can send a text:');
+  {
+    // Phone Link installed but never set up: Windows answered the link with a
+    // "Pick an app" box, and the reply still claimed the text was written.
+    const { sendText } = require('../src/core/agent/messaging');
+    const opened = [];
+    const r = await sendText({ to: "maya", text: "hi", config: { get: (k, d) => (k === "messaging.contacts" ? { maya: "+15550100000" } : d) }, logger: quiet,
+      bridge: { openUrl: async (u) => opened.push(u) }, handlerReady: async () => false });
+    check('it does not open the link', opened.length === 0);
+    check('it says texts are not set up, and how to fix it', r.ok === false && /Phone Link/.test(r.summary) && /pair/i.test(r.summary), r.summary);
+    check('and offers WhatsApp instead', /WhatsApp/.test(r.summary));
   }
 
   console.log('\nIt never sends without being shown first:');

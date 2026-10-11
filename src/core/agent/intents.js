@@ -262,6 +262,13 @@ const INTENTS = [
     args: (_m, text) => ({ goal: text })
   },
 
+  // --- Signing in, once, in the assistant's browser ---------------------------
+  {
+    re: /^(?:(?:can|could) you\s+)?(?:please\s+)?(?:sign|log)\s*(?:me\s+)?(?:in|into|on)\s+(?:to\s+)?(?:my\s+)?(?:account\s+(?:on|at)\s+)?([a-z0-9][a-z0-9.\- ]{1,40}?)(?:\s+account)?[.!?]*$/i,
+    tool: 'browser_signin',
+    args: (m) => ({ site: m[1].trim() })
+  },
+
   // --- Using a website ---------------------------------------------------------
   // Things that live on a site rather than in a search snippet. These went to
   // the web search, which returned a page title and no price, or to the

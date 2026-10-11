@@ -88,6 +88,19 @@ const notTo = (q, tool) => {
   expect('write a two line poem about rain', 'do_task');
   expect('draft an email to my teacher about the deadline', 'do_task');
 
+  console.log('\nSigning in, once, in the assistant\'s browser:');
+  expect('sign in to amazon', 'browser_signin', { site: 'amazon' });
+  expect('log into canvas', 'browser_signin', { site: 'canvas' });
+  expect('can you log in to netflix', 'browser_signin', { site: 'netflix' });
+  notTo('sign up for the newsletter', 'browser_signin');
+
+  console.log('\nThings that live on a website go to the browser:');
+  expect('check the score of the falcons game', 'browse');
+  expect('go on amazon and find a good usb c hub under 20 dollars', 'browse');
+  expect('find me a cheap flight to new york next weekend', 'browse');
+  expect('how much is a ps5', 'browse');
+  notTo('whats the weather tomorrow', 'browse');
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail > 0 ? 1 : 0);
 })().catch((e) => { console.error('FATAL:', e.stack || e.message); process.exit(1); });

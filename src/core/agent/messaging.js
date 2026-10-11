@@ -65,13 +65,33 @@ const CHANNELS = {
 };
 
 /**
+ * Whether anything on this PC opens sms: links.
+ *
+ * Checked because it was not: with Phone Link installed but never set up,
+ * Windows answered the link with a "Pick an app" box, the text went nowhere,
+ * and the reply still said it had been written in Phone Link.
+ */
+function smsHandlerReady() {
+  return new Promise((resolve) => {
+    require('child_process').execFile('reg.exe',
+      ['query', 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\sms\\UserChoice', '/v', 'ProgId'],
+      { windowsHide: true, timeout: 4000 },
+      (err, stdout) => resolve(!err && /ProgId\s+REG_SZ\s+\S+/.test(String(stdout))));
+  });
+}
+
+/** What to say when texts cannot go out yet, and what fixes it. */
+const SMS_SETUP = 'Texts are not set up on this PC yet. Open Phone Link, choose iPhone, pair it over Bluetooth, ' +
+  'and turn on Messages when your phone asks — then texts will work. Until then I can send it on WhatsApp: just say "WhatsApp" instead of "text".';
+
+/**
  * A text, by handing Windows an sms: link.
  *
  * Phone Link registers that protocol, so this opens the right conversation
  * with the body already written. It needs a number rather than a name, which
  * is what messaging.contacts is for.
  */
-async function sendText({ to, text, config, bridge, logger = console } = {}) {
+async function sendText({ to, text, config, bridge, logger = console, handlerReady = smsHandlerReady } = {}) {
   const book = config ? (config.get('messaging.contacts', {}) || {}) : {};
 
   // A number said out loud arrives with spaces, dashes and brackets in it.
@@ -104,6 +124,11 @@ async function sendText({ to, text, config, bridge, logger = console } = {}) {
     // writing the message beats losing it.
     if (viaApi.ok) return viaApi;
     logger.warn?.(`[message] textbelt failed (${viaApi.summary}); falling back to Phone Link`);
+  }
+
+  if (!(await handlerReady())) {
+    logger.info?.('[message] no app handles sms: links; Phone Link is not set up');
+    return { ok: false, summary: SMS_SETUP, spoken: 'Texts are not set up on this PC yet. I have put the steps on screen. I can send it on WhatsApp instead.' };
   }
 
   const url = `sms:${number}?body=${encodeURIComponent(text)}`;
@@ -266,4 +291,4 @@ async function sendMessage({ browser, bridge, config, channel = 'sms', to, text,
   };
 }
 
-module.exports = { sendMessage, sendText, CHANNELS };
+module.exports = { sendMessage, sendText, CHANNELS, smsHandlerReady, SMS_SETUP };

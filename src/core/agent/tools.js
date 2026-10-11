@@ -678,11 +678,36 @@ const webTools = (ctx) => [
       });
       let host = '';
       try { host = r.url ? new URL(r.url).hostname.replace(/^www\./, '') : ''; } catch { /* about:blank */ }
+      const needsLogin = !r.ok && host && /sign ?in|log ?in|account|password/i.test(r.answer);
+      const answer = needsLogin ? `${r.answer} Say "sign in to ${host}" and I will open it for you to log in once.` : r.answer;
       return {
         ok: r.ok,
-        summary: r.answer,
-        spoken: r.answer,
+        summary: answer,
+        spoken: answer,
         found: host ? [{ glyph: '🌐', title: host, subtitle: r.url, url: r.url }] : []
+      };
+    }
+  },
+  {
+    name: 'browser_signin',
+    appId: 'web-search',
+    description: 'Open a website in the assistant\'s own browser so the user can sign in to it once. Use for "sign in to amazon", "log into canvas", "connect my account on X".',
+    parameters: obj({ site: str('The site, e.g. "amazon.com"') }, ['site']),
+    run: async ({ site }) => {
+      if (!ctx.browser) return { ok: false, summary: 'The browser is not available.' };
+      let url = String(site || '').trim().toLowerCase().replace(/\s+/g, '');
+      // Canvas is the school's own address, not canvas.com.
+      if (/^canvas$/.test(url) && ctx.config.get('canvas.host', '')) url = ctx.config.get('canvas.host');
+      if (!/\./.test(url)) url += '.com';
+      if (!/^https?:\/\//.test(url)) url = `https://${url}`;
+      await ctx.browser.launch();
+      await ctx.browser.newTab(url);
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      // The user types their own password; the assistant never does.
+      return {
+        ok: true,
+        summary: `I have opened ${host} in my browser. Sign in there once and it will stay signed in, so I can use it for you. I never type passwords myself.`,
+        spoken: `Opened ${host}. Sign in there once and I will stay signed in.`
       };
     }
   },
