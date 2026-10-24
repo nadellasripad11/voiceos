@@ -205,8 +205,17 @@ const transcript = (text) => ({ status: 200, body: { text, language: 'en', segme
     const { createBrain } = require('../src/core/llm');
     const fakeConfig = { get: (k, d) => (k === 'llm.fallbackProvider' ? DEFAULTS.llm.fallbackProvider : k === 'llm.provider' ? 'groq' : d) };
     const b = createBrain({ config: fakeConfig, logger: quiet, credentials: { groq: 'test' } });
-    check('the default brain is Groq alone, nothing that loads a model here', b.name === 'groq' && !b.local,
-      `got ${b.name}`);
+    check('the default brain is Groq with Gemini behind it, nothing that loads a model here',
+      b.name === 'groq+gemini' && !b.local, `got ${b.name}`);
+  }
+  {
+    // Out of quota is worded for the user, so the fallback has to know it by code.
+    const { FallbackProvider } = require('../src/core/llm/fallback');
+    const busy = { name: 'groq', available: async () => true, chat: async () => { const e = new Error('I have used up my free thinking time'); e.code = 'rate_limited'; throw e; } };
+    const backup = { name: 'gemini', available: async () => true, chat: async () => ({ text: 'from gemini', toolCalls: [] }) };
+    const fb = new FallbackProvider({ primary: busy, secondary: backup, secondaryModel: 'g', logger: quiet });
+    const r = await fb.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }] });
+    check('Groq out of quota is answered by Gemini', r.text === 'from gemini', JSON.stringify(r));
   }
 
   groq.close();
