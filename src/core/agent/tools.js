@@ -505,7 +505,7 @@ const SMALL_TALK = {
   sorry: ['No harm done.']
 };
 
-const smallTalkTools = () => [
+const smallTalkTools = (ctx) => [
   {
     name: 'clock',
     appId: 'system',
@@ -1116,7 +1116,7 @@ function openingFor(toolName) {
 function buildTools(ctx) {
   const all = [
     ...systemTools(ctx),
-    ...smallTalkTools(),
+    ...smallTalkTools(ctx),
     ...weatherTools(ctx),
     ...messagingTools(ctx),
     ...personalTools(ctx),
