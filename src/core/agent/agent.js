@@ -389,6 +389,29 @@ ${facts}`;
   }
 
   /** Runs one tool, asking for approval first when the tool changes something. */
+  /** Every tool, for a voice session that calls them itself. */
+  toolsForLive() {
+    return buildTools(this.ctx);
+  }
+
+  /**
+   * Runs one tool the Live voice asked for, by name, with the same approval
+   * as any other action. What comes back from the web, the screen or the
+   * inbox is fenced, exactly as on the text path.
+   *
+   * @returns {Promise<{ok: boolean, text: string, found: Array}>}
+   */
+  async runTool(name, args = {}, { signal, onStage = () => {} } = {}) {
+    const tool = buildTools(this.ctx).find((t) => t.name === name);
+    if (!tool) return { ok: false, text: `No tool named ${name}.`, found: [] };
+    this.onStage = onStage;
+    onStage('thinking', { tool: name });
+    const r = await this.execute(tool, args, { signal });
+    let text = String((r && (r.summary || r.spoken)) || (r && r.ok ? 'Done.' : 'That did not work.'));
+    if (isUntrustedTool(name)) text = fence(text, `the ${name} tool`);
+    return { ok: Boolean(r && r.ok !== false), text, found: (r && r.found) || [], cancelled: Boolean(r && r.cancelled) };
+  }
+
   async execute(tool, args = {}, { signal } = {}) {
     const needsConfirm =
       tool.mutating &&

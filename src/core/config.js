@@ -24,6 +24,16 @@ const DEFAULTS = {
   //   tiny.en-q5_1 + greedy + ac   1638ms for 3.4s of audio  (RTF 0.48)
   // i.e. 3.2x faster, with accuracy held at 100% once the vocabulary prompt is
   // supplied. Re-run `npm run bench` on better hardware and raise `model`.
+  // Gemini Live: one connection that hears, thinks and speaks (~0.7s to the
+  // first word, measured, against 1.6-2.4s for transcribe -> think -> speak).
+  // Used when a Gemini key is set; anything that stops it falls back to the
+  // usual path. live: false keeps the three-hop path always.
+  voice: {
+    live: true,
+    liveModel: 'gemini-3.8-live',
+    liveVoice: 'Charon'
+  },
+
   stt: {
     // Transcribe on Groq (whisper-large-v3-turbo) with local whisper.cpp
     // behind it. ~0.5s instead of 2-16s of every core on this laptop, and
