@@ -88,6 +88,13 @@ const notTo = (q, tool) => {
   expect('write a two line poem about rain', 'do_task');
   expect('draft an email to my teacher about the deadline', 'do_task');
 
+  console.log('\nThe camera, only when asked to look:');
+  expect('what am i holding', 'look');
+  expect('how do i look', 'look');
+  expect('what do you see', 'look');
+  notTo('what is this', 'look');
+  notTo('whats on my screen', 'look');
+
   console.log('\nSigning in, once, in the assistant\'s browser:');
   expect('sign in to amazon', 'browser_signin', { site: 'amazon' });
   expect('log into canvas', 'browser_signin', { site: 'canvas' });

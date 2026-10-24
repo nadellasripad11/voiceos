@@ -297,6 +297,12 @@
   <div class="brain-chip" id="brainChip" title="The model answering right now"></div>
 </main>
 
+<!-- What the browser agent is doing, live, while it works. -->
+<div class="browserview glass" id="browserView" hidden>
+  <div class="browserview-head"><span class="micro">Browser</span><span class="browserview-url" id="browserUrl"></span></div>
+  <img id="browserFrame" alt="What Jarvis's browser is showing" />
+</div>
+
 <!-- Asks before anything that sends, buys, books or changes something.
      Without this the console had no way to answer, and every such action
      waited two minutes and was quietly declined. -->

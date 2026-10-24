@@ -152,7 +152,7 @@ function describe(snap) {
  * @returns {Promise<{ok: boolean, answer: string, url?: string, steps: string[], injection?: string}>}
  */
 async function runBrowse({ goal, browser, provider, model, confirm = null, progress = () => {},
-  logger = console, signal = null, maxSteps = 10, startUrl = null, context = '' }) {
+  logger = console, signal = null, maxSteps = 10, startUrl = null, context = '', onFrame = null }) {
   // Today's date and where the user is: without it "next Saturday" became
   // December 5th on a flight search in October.
   const now = new Date();
@@ -171,6 +171,20 @@ async function runBrowse({ goal, browser, provider, model, confirm = null, progr
   if (!browser) return { ok: false, answer: 'The browser is not available.', steps: [] };
   await browser.launch();
   const page = await browser.newTab(startUrl || 'about:blank');
+
+  // What the tab shows, streamed to the console as small JPEG frames, so the
+  // user can watch what is being done in their name without a second window.
+  let screencasting = false;
+  if (onFrame && page.session) {
+    try {
+      page.session.on('Page.screencastFrame', (f) => {
+        page.session.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {});
+        try { onFrame({ data: f.data, url: (f.metadata && f.metadata.url) || '' }); } catch { /* display only */ }
+      });
+      await page.session.send('Page.startScreencast', { format: 'jpeg', quality: 55, maxWidth: 900, maxHeight: 600, everyNthFrame: 2 });
+      screencasting = true;
+    } catch (err) { logger.debug?.(`[browse] no live view: ${err.message}`); }
+  }
   if (startUrl) await page.waitForLoad({ timeoutMs: 15000 });
 
   const steps = [];
@@ -341,6 +355,10 @@ async function runBrowse({ goal, browser, provider, model, confirm = null, progr
   } finally {
     // The tab stays open for a moment's inspection only if asked; by default
     // it is closed so tabs do not pile up behind every question.
+    if (screencasting) {
+      page.session.send('Page.stopScreencast').catch(() => {});
+      try { onFrame({ done: true }); } catch { /* display only */ }
+    }
     page.close().catch(() => {});
   }
 }

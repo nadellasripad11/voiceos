@@ -520,6 +520,50 @@ const smallTalkTools = () => [
     }
   },
   {
+    name: 'look',
+    appId: 'system',
+    description: 'Look through the user\'s webcam and answer about what is in front of it: "what am I holding", "look at this", "how do I look", "what do you see". One picture; the camera closes straight after.',
+    parameters: obj({ question: str('What the user wants to know about what is in front of the camera') }),
+    run: async ({ question = '' } = {}) => ctx.look(question)
+  },
+  {
+    name: 'remember',
+    appId: 'system',
+    description: 'Remember something about the user for the future, when they say "remember that...".',
+    parameters: obj({ fact: str('The thing to remember, as a short sentence about the user') }, ['fact']),
+    run: async ({ fact }) => {
+      if (!ctx.memory) return { ok: false, summary: 'Memory is not available.' };
+      const added = ctx.memory.add([fact], 'told');
+      if (!added.length) {
+        return { ok: true, summary: /pass|pin|code|card|account/i.test(fact) ? 'I do not keep passwords, codes or card numbers — that is safer written down elsewhere.' : 'I already knew that.', spoken: 'Noted, sir.' };
+      }
+      return { ok: true, summary: `I will remember that: ${added[0]}`, spoken: 'I will remember that, sir.' };
+    }
+  },
+  {
+    name: 'recall',
+    appId: 'system',
+    description: 'Say what is remembered about the user. Use for "what do you remember about me", "what do you know about me".',
+    parameters: obj({}),
+    run: async () => {
+      const facts = ctx.memory ? ctx.memory.facts : [];
+      if (!facts.length) return { ok: true, summary: 'I do not remember anything about you yet.' };
+      return { ok: true, summary: facts.map((f) => `- ${f.text}`).join('\n'), spoken: `I remember ${facts.length} things about you. They are on screen.` };
+    }
+  },
+  {
+    name: 'forget',
+    appId: 'system',
+    description: 'Forget something remembered about the user, when they say "forget...".',
+    parameters: obj({ about: str('Words identifying what to forget') }, ['about']),
+    run: async ({ about }) => {
+      const gone = ctx.memory ? ctx.memory.forget(about) : [];
+      return gone.length
+        ? { ok: true, summary: `Forgotten: ${gone.join('; ')}`, spoken: 'Forgotten, sir.' }
+        : { ok: true, summary: `I had nothing remembered about "${about}".` };
+    }
+  },
+  {
     name: 'small_talk',
     appId: 'system',
     description: 'Reply to a greeting, thanks, or a question about what you are. No lookup.',
@@ -671,6 +715,7 @@ const webTools = (ctx) => [
         model: ctx.config.get('llm.agentModel') || ctx.config.get('llm.model'),
         confirm: ctx.confirm,
         progress: progress || (() => {}),
+        onFrame: ctx.browserFrame || null,
         logger: ctx.logger,
         signal,
         maxSteps: ctx.config.get('agent.browseMaxSteps', 10),
@@ -1020,6 +1065,7 @@ const OPENINGS = {
   my_day: 'Let me look at your day.',
   news: 'Checking the headlines.',
   browse: 'Opening the browser.',
+  look: 'Let me take a look.',
   search_drive: 'Searching your Drive.',
   search_web: 'Searching the web.',
   answer_from_web: 'Looking that up.',

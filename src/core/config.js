@@ -267,6 +267,8 @@ const DEFAULTS = {
     ocr: true,
     webSearch: true,
     confirmBeforeActions: true,   // never send/change anything unreviewed
+    // Actions that do not ask first. Texts, emails and purchases always ask.
+    noApprovalFor: ['create_event'],
     autoConfirmReadOnly: true,
     editSelection: true,
     reminders: true,

@@ -49,7 +49,8 @@ Where instructions come from:
   false by definition.`;
 
 class Agent {
-  constructor({ provider, config, bridge, browser, tts, connections, mcp = null, ambient = null, logger = console, requestConfirmation }) {
+  constructor({ provider, config, bridge, browser, tts, connections, mcp = null, ambient = null, memory = null, logger = console, requestConfirmation }) {
+    this.memory = memory;
     this.provider = provider;
     this.config = config;
     this.bridge = bridge;
@@ -77,7 +78,7 @@ class Agent {
    * large, stable instructions cacheable and invalidates only the tail.
    */
   systemPrompt() {
-    const facts = this.ambient && this.ambient.snapshot();
+    const facts = [this.ambient && this.ambient.snapshot(), this.memory && this.memory.summary()].filter(Boolean).join('\n\n');
     if (!facts) return SYSTEM_PROMPT;
     return `${SYSTEM_PROMPT}
 
@@ -99,6 +100,11 @@ ${facts}`;
       // Tools that act step by step (the browser) ask before anything that
       // commits, through the same approval every other action uses.
       confirm: this.requestConfirmation || null,
+      memory: this.memory,
+      // One webcam picture, read by Gemini; set by the app, absent in tests.
+      look: (question) => (this.look ? this.look(question) : Promise.resolve({ ok: false, summary: 'The camera is not available here.' })),
+      // The browser agent's tab, frame by frame, for the console's live view.
+      browserFrame: (frame) => { if (this.onBrowserFrame) this.onBrowserFrame(frame); },
       mcp: this.mcp,
       ambient: this.ambient,
       logger: this.logger
@@ -413,8 +419,13 @@ ${facts}`;
   }
 
   async execute(tool, args = {}, { signal } = {}) {
+    // The user chose what is low-stakes enough not to ask about: by default
+    // calendar events. Texts, emails, purchases and anything that sends,
+    // posts or deletes always ask.
+    const trusted = new Set(this.config.get('agent.noApprovalFor', ['create_event']) || []);
     const needsConfirm =
       tool.mutating &&
+      !trusted.has(tool.name) &&
       this.config.get('agent.confirmBeforeActions', true) &&
       !(tool.autoConfirm && this.config.get('agent.autoConfirmReadOnly', true));
 

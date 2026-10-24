@@ -62,5 +62,9 @@ contextBridge.exposeInMainWorld('voiceos', {
   onVitals: (fn) => on('console-vitals', fn),
   // Approval for anything that sends, buys, books or changes something.
   onConfirm: (fn) => on('agent-confirm', fn),
+  onBrowserFrame: (fn) => on('browser-frame', fn),
+  // One picture from the webcam, only when Jarvis is asked to look.
+  onCameraRequest: (fn) => on('camera-capture', fn),
+  cameraFrame: (id, frame) => ipcRenderer.invoke('voiceos:camera-frame', { id, ...frame }),
   resolveConfirm: (id, approved) => ipcRenderer.invoke('voiceos:resolve-confirm', { id, approved })
 });

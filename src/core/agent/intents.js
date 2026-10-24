@@ -262,6 +262,31 @@ const INTENTS = [
     args: (_m, text) => ({ goal: text })
   },
 
+  // --- The camera ----------------------------------------------------------------
+  {
+    re: /\b(?:what am i holding|what(?:'?s| is) in my hand|look at (?:me|this thing|what i(?:'m| am) holding)|how do i look|what do you see|can you see (?:me|this)|(?:through|on|with) (?:the |my )?(?:web)?cam(?:era)?|use (?:the |my )?(?:web)?cam(?:era)?)\b/i,
+    tool: 'look',
+    args: (_m, text) => ({ question: text })
+  },
+
+  // --- Memory ------------------------------------------------------------------
+  {
+    re: /^(?:(?:hey\s+)?jarvis,?\s+)?(?:please\s+)?remember\s+(?:that\s+)?(.{4,})$/i,
+    tool: 'remember',
+    guard: (_m, text) => !/^remember\s+(?:when|what|who|where|how|to\s+remind)/i.test(text),
+    args: (m) => ({ fact: m[1].trim().replace(/[.!]+$/, '') })
+  },
+  {
+    re: /\bwhat\s+(?:do\s+you|have\s+you)\s+(?:remember|know|learn(?:ed|t))\s+about\s+me\b/i,
+    tool: 'recall',
+    args: () => ({})
+  },
+  {
+    re: /^(?:(?:hey\s+)?jarvis,?\s+)?(?:please\s+)?forget\s+(?:that\s+|about\s+)?(.{3,})$/i,
+    tool: 'forget',
+    args: (m) => ({ about: m[1].trim().replace(/[.!]+$/, '') })
+  },
+
   // --- Signing in, once, in the assistant's browser ---------------------------
   {
     re: /^(?:(?:can|could) you\s+)?(?:please\s+)?(?:sign|log)\s*(?:me\s+)?(?:in|into|on)\s+(?:to\s+)?(?:my\s+)?(?:account\s+(?:on|at)\s+)?([a-z0-9][a-z0-9.\- ]{1,40}?)(?:\s+account)?[.!?]*$/i,

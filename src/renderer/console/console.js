@@ -652,6 +652,58 @@ vo.onSecurityWarning((payload = {}) => {
 
 $('securityDismiss').addEventListener('click', () => { el.alert.hidden = true; });
 
+// --- the browser agent, live -------------------------------------------------
+/*
+ * Shown while the browser agent works, so what is being done in the user's
+ * name is visible; it lingers a few seconds after, then goes.
+ */
+let browserHideTimer = null;
+vo.onBrowserFrame((f = {}) => {
+  const view = $('browserView');
+  clearTimeout(browserHideTimer);
+  if (f.done) { browserHideTimer = setTimeout(() => { view.hidden = true; }, 4000); return; }
+  if (!f.data) return;
+  $('browserFrame').src = `data:image/jpeg;base64,${f.data}`;
+  if (f.url) $('browserUrl').textContent = f.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60);
+  view.hidden = false;
+});
+
+// --- the camera, one picture at a time --------------------------------------
+/*
+ * Asked to look, the console opens the camera, takes one picture once the
+ * exposure settles, and closes the camera again — it is never left running.
+ * The picture is shown, so it is always visible what was seen.
+ */
+vo.onCameraRequest(async ({ id } = {}) => {
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+    const video = document.createElement('video');
+    video.muted = true;
+    video.srcObject = stream;
+    await video.play();
+    await new Promise((r) => setTimeout(r, 700)); // let the exposure settle
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+    for (const track of stream.getTracks()) track.stop();
+    stream = null;
+    const view = $('browserView');
+    $('browserFrame').src = `data:image/jpeg;base64,${data}`;
+    $('browserUrl').textContent = 'camera · just now';
+    view.hidden = false;
+    clearTimeout(browserHideTimer);
+    browserHideTimer = setTimeout(() => { view.hidden = true; }, 8000);
+    vo.cameraFrame(id, { data });
+  } catch (err) {
+    vo.cameraFrame(id, { error: err.message || 'no camera' });
+  } finally {
+    if (stream) for (const track of stream.getTracks()) track.stop();
+  }
+});
+
 // --- asking before acting --------------------------------------------------
 /*
  * One at a time: a second request waits behind the first rather than

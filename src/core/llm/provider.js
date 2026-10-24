@@ -289,7 +289,8 @@ class GeminiProvider extends LlmProvider {
       const parts = [];
       if (m.content) parts.push({ text: m.content });
       for (const img of m.images || []) {
-        parts.push({ inlineData: { mimeType: 'image/png', data: img } });
+        // JPEG from the camera, PNG from screenshots: told apart by their first bytes.
+        parts.push({ inlineData: { mimeType: String(img).startsWith('/9j/') ? 'image/jpeg' : 'image/png', data: img } });
       }
       for (const c of m.toolCalls || []) {
         parts.push({ functionCall: { name: c.name, args: c.args } });

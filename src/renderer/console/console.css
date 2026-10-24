@@ -993,6 +993,23 @@ html[data-state="listening"] .ask-mic { background: var(--blue); animation: ping
 }
 .tagline .rule { width: 23px; margin-top: 9px; }
 
+/* ---- the browser agent, live ---- */
+
+.browserview {
+  position: fixed;
+  right: 2.2%;
+  top: 16%;
+  z-index: 70;
+  width: min(460px, 34vw);
+  padding: 10px 10px 8px;
+  -webkit-app-region: no-drag;
+  animation: rise 0.25s ease;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.78));
+}
+.browserview-head { display: flex; align-items: baseline; gap: 10px; padding: 2px 4px 8px; }
+.browserview-url { font: 400 10.5px/1 var(--sans); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.browserview img { display: block; width: 100%; border-radius: 8px; box-shadow: 0 0 0 1px rgba(40, 56, 82, 0.15); background: #fff; }
+
 /* ---- asking before acting ---- */
 
 .confirm {
