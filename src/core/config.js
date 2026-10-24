@@ -65,13 +65,12 @@ const DEFAULTS = {
     // difference between a voice assistant and a form you wait on.
     provider: 'groq',
 
-    // No local brain behind Groq. It used to be Ollama, and on this laptop
-    // the moment Groq was busy it loaded a 1-1.5GB model into ~1GB of free
-    // memory and froze everything. A busy Groq is now waited out (it says
-    // how long, usually seconds) and retried once; past that Jarvis says so.
-    // Set to 'ollama' to bring the local fallback back.
-    fallbackProvider: '',
-    fallbackModel: 'qwen2.5:1.5b-instruct',
+    // Gemini behind Groq, in the cloud: when Groq is out of quota or down,
+    // the answer comes from Gemini 2.5 Flash (~0.6s, thinking off) instead of
+    // "ask me again in a minute". Never a local model: Ollama loaded 1-1.5GB
+    // into ~1GB of free memory and froze the laptop. '' for Groq alone.
+    fallbackProvider: 'gemini',
+    fallbackModel: 'gemini-2.5-flash',
     baseUrl: 'http://127.0.0.1:11434',
     // Small by default so this laptop stays responsive.
     model: 'qwen/qwen3.8-27b',

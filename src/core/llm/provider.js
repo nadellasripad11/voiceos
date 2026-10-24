@@ -301,7 +301,11 @@ class GeminiProvider extends LlmProvider {
       contents,
       generationConfig: {
         temperature,
-        ...(maxTokens ? { maxOutputTokens: maxTokens } : {})
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
+        // Thinking off on 2.5: measured 0.55-0.75s with it off, and the
+        // newer models that think by default took 6 to 81 seconds — no use
+        // for a voice reply.
+        ...(/^gemini-2\.5/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {})
       }
     };
     if (systemParts.length) body.systemInstruction = { parts: systemParts };
@@ -315,12 +319,19 @@ class GeminiProvider extends LlmProvider {
       }];
     }
 
-    const res = await fetch(`${this.baseUrl}/models/${model}:generateContent?key=${this.apiKey}`, {
+    // The key goes in a header, not the address, where logs and error
+    // messages would carry it.
+    const deadline = AbortSignal.timeout(20000);
+    const res = await fetch(`${this.baseUrl}/models/${model}:generateContent`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify(body),
-      signal
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline
     });
+    if (res.status === 429) {
+      await res.text().catch(() => '');
+      throw rateLimited(retryAfterMs(res));
+    }
     if (!res.ok) {
       const detail = (await res.text()).slice(0, 400);
       throw new Error(`Gemini chat failed (HTTP ${res.status}): ${detail}`);

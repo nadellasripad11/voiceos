@@ -20,6 +20,10 @@ const { LlmProvider } = require('./provider');
 
 /** Failures that mean "ask someone else", as opposed to "that is the answer". */
 function worthRetrying(err) {
+  // Out of quota is worded for the user, not for this pattern match, so it
+  // is recognised by its code — otherwise Groq running dry never reached the
+  // backup at all.
+  if (err && err.code === 'rate_limited') return true;
   const m = String((err && err.message) || '').toLowerCase();
   return (
     /no .* api key|unauthor|forbidden|401|403/.test(m) ||      // not set up
