@@ -1,0 +1,16 @@
+// For deploying the website as a Cloudflare Worker (keeps a workers.dev address):
+//   cd web && npx wrangler deploy
+// Secrets are set separately and never written here:
+//   npx wrangler secret put GROQ_API_KEY   (and GEMINI_API_KEY, JARVIS_PASSWORD)
+// A Pages project does not need this file; it runs _worker.js on its own.
+{
+  "name": "myownvoiceos",
+  "main": "_worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": ".",
+    "binding": "ASSETS",
+    // The server answers /api/*; everything else is the static site.
+    "run_worker_first": ["/api/*"]
+  }
+}
