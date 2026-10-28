@@ -15,8 +15,11 @@ const path = require('path');
 
 const SRC = path.resolve(process.argv[2] || '../orbit-src');
 const OUT = path.join(__dirname, '..', 'web');
-const FILES = ['index.html', 'style.css', 'app.js', 'startup.js', 'singularity.js', 'core-field.js',
-  'fluid-simulation.js', 'scene-layout.js', 'speech-playback.js', 'favicon.svg'];
+// The visual layer only: the scene, its styles and the opening. The app logic
+// (app.js, speech playback, the server) is VoiceOS's own — web/jarvis.js.
+// index.html is not re-imported: web/index.html now holds Jarvis's own layout.
+const FILES = ['style.css', 'startup.js', 'singularity.js', 'core-field.js',
+  'fluid-simulation.js', 'scene-layout.js', 'favicon.svg'];
 
 /** Grey -> the same lightness in VoiceOS blue. Darker greys get deeper navy. */
 function tint(r, g, b) {

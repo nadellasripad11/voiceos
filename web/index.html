@@ -10,6 +10,7 @@
     <style>html.is-starting{background:#0b1b38}html.is-starting .orbit-app{opacity:0}#startup{position:fixed;inset:0;background:#0b1b38;z-index:1000}</style>
     <noscript><style>#startup{display:none}html.is-starting .orbit-app{opacity:1}</style></noscript>
     <link rel="stylesheet" href="/style.css" />
+      <link rel="stylesheet" href="/jarvis.css" />
   </head>
   <body>
     <div id="startup" aria-hidden="true">
@@ -45,20 +46,33 @@
       <canvas id="singularity" aria-label="Animated black singularity with orbiting particles and flowing gravitational waves"></canvas>
       <div class="grain" aria-hidden="true"></div>
 
-      <nav class="navigation glass" aria-label="Main navigation">
-        <button class="nav-button active" data-panel="home" aria-label="Home" aria-pressed="true" data-tooltip="Home"><svg class="icon"><use href="#i-home"/></svg></button>
-        <button class="nav-button" data-panel="conversations" aria-label="Conversations" aria-pressed="false" aria-controls="side-panel" aria-expanded="false" data-tooltip="Conversations"><svg class="icon"><use href="#i-chat"/></svg></button>
-        <button class="nav-button" data-panel="workspace" aria-label="Workspace" aria-pressed="false" aria-controls="side-panel" aria-expanded="false" data-tooltip="Workspace"><svg class="icon"><use href="#i-grid"/></svg></button>
-        <button class="nav-button" data-panel="settings" aria-label="Settings" aria-pressed="false" aria-controls="side-panel" aria-expanded="false" data-tooltip="Settings"><svg class="icon"><use href="#i-settings"/></svg></button>
-      </nav>
-
-      <section id="side-panel" class="side-panel glass" aria-label="Navigation panel" hidden></section>
+      <aside class="jv-left" aria-label="Sections">
+        <nav class="jv-nav">
+          <button class="jv-nav-item" data-view="home"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.2"/></svg><span>Home</span></button>
+          <button class="jv-nav-item" data-view="conversations"><svg viewBox="0 0 24 24"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 17H10l-4.5 3.2V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5z"/></svg><span>Conversations</span></button>
+          <button class="jv-nav-item" data-view="tasks"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12.2l2.4 2.4 4.8-5"/></svg><span>Tasks</span></button>
+          <button class="jv-nav-item" data-view="knowledge"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7.5" ry="2.8"/><path d="M4.5 6v12c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8V6"/><path d="M4.5 12c0 1.6 3.4 2.8 7.5 2.8s7.5-1.2 7.5-2.8"/></svg><span>Knowledge</span></button>
+          <button class="jv-nav-item" data-view="systems"><svg viewBox="0 0 24 24"><circle cx="12" cy="6.5" r="2.6"/><circle cx="6.5" cy="16.5" r="2.6"/><circle cx="17.5" cy="16.5" r="2.6"/><path d="M10.7 8.8l-2.9 5.3M13.3 8.8l2.9 5.3M9.1 16.5h5.8"/></svg><span>Systems</span></button>
+          <button class="jv-nav-item" data-view="environment"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.6"/></svg><span>Environment</span></button>
+        </nav>
+        <article class="jv-status glass">
+          <h3 class="jv-micro">System status</h3>
+          <canvas id="status-wave" aria-hidden="true"></canvas>
+          <ul id="lights">
+            <li data-light="processing">Processing</li>
+            <li data-light="synthesis">Synthesis</li>
+            <li data-light="memory">Memory</li>
+            <li data-light="connections">Connections</li>
+            <li data-light="optimisation">Optimisation</li>
+          </ul>
+        </article>
+      </aside>
 
       <section class="request-island glass" aria-label="Your current request">
         <div class="request-method" id="request-method"><svg class="icon"><use href="#i-wave"/></svg></div>
         <div class="request-content">
           <p id="current-request">What would you like to do?</p>
-          <div class="request-status"><span class="status-ring" id="status-ring"></span><span id="request-status">Connecting to the local companion…</span></div>
+          <div class="request-status"><span class="status-ring" id="status-ring"></span><span id="request-status">Ask me anything, sir.</span></div>
         </div>
       </section>
 
@@ -66,7 +80,7 @@
 
       <section class="response-island glass" aria-label="Jarvis's response">
         <div class="response-avatar" aria-hidden="true"><span class="orbit-ring"></span></div>
-        <div class="response-text" id="current-response">Your personal assistant is getting ready.</div>
+        <div class="response-text" id="current-response">Good evening, sir. How can I help?</div>
         <button class="more-button" id="response-more" aria-label="Response options" aria-controls="response-menu" aria-expanded="false"><span></span><span></span><span></span></button>
         <div id="response-menu" class="popover glass response-menu" hidden>
           <button id="copy-response">Copy response</button>
@@ -76,35 +90,61 @@
       </section>
 
       <form class="composer glass" id="composer" aria-label="Message Jarvis">
-        <button class="round-button attach-button" type="button" id="attach-button" aria-label="Add attachment" aria-controls="attach-menu" aria-expanded="false"><svg class="icon"><use href="#i-plus"/></svg></button>
+        
         <input id="message-input" type="text" placeholder="Type a message or ask me anything..." aria-label="Your message" autocomplete="off" maxlength="8000" />
         <button class="round-button mic-button" id="mic-button" type="button" aria-label="Record a voice message" aria-pressed="false"><svg class="icon"><use href="#i-mic"/></svg></button>
         <button class="round-button send-button" type="submit" aria-label="Send message"><svg class="icon"><use href="#i-send"/></svg></button>
-        <div id="attach-menu" class="popover glass attach-menu" hidden>
-          <button id="choose-files" type="button"><svg class="icon"><use href="#i-file"/></svg> Attach files</button>
-          <button id="use-example" type="button"><svg class="icon"><use href="#i-plus"/></svg> Try an example</button>
-          <p>Selected text/audio is sent to Groq.</p>
-        </div>
-        <div id="attachment-chip" class="attachment-chip glass" hidden><svg class="icon"><use href="#i-file"/></svg><span id="attachment-name"></span><button type="button" id="remove-attachment" aria-label="Remove attachment"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        
+        
       </form>
 
       <input id="file-input" type="file" multiple hidden />
 
-      <aside class="task-panel glass" id="task-panel" aria-label="Tasks">
-        <header class="task-header"><h1>Tasks</h1><button class="plain-button" id="close-tasks" aria-label="Close tasks"><svg class="icon"><use href="#i-close"/></svg></button></header>
-        <section class="task-section" aria-labelledby="current-tasks-heading">
-          <h2 id="current-tasks-heading">Current</h2>
-          <div class="task-list"><p class="workspace-note">No active tasks.</p></div>
-        </section>
-        <section class="task-section upcoming" aria-labelledby="upcoming-tasks-heading">
-          <h2 id="upcoming-tasks-heading">Upcoming</h2>
-          <div class="task-list"><p class="workspace-note">Your scheduled tasks will appear here.</p></div>
+      <aside class="jv-right" aria-label="Jarvis">
+        <header class="jv-top">
+          <div class="jv-clock"><div class="jv-micro" id="clock-date"></div><div class="jv-time" id="clock-time"></div><div class="jv-micro" id="clock-sky">&nbsp;</div></div>
+          <i class="jv-rule"></i>
+          <button class="jv-avatar" id="avatar" aria-label="Home"></button>
+          <div class="jv-tools">
+            <button id="tool-search" aria-label="Ask"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3L20 20"/></svg></button>
+            <button id="tool-alerts" aria-label="Alerts"><svg viewBox="0 0 24 24"><path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.8H5z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg></button>
+            <button id="tool-settings" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8l1.6 2.3 2.7-.6.6 2.7 2.3 1.6-1.4 2.4 1.4 2.4-2.3 1.6-.6 2.7-2.7-.6L12 21.2l-1.6-2.3-2.7.6-.6-2.7-2.3-1.6L6.2 12 4.8 9.6l2.3-1.6.6-2.7 2.7.6z"/></svg></button>
+          </div>
+        </header>
+        <div class="jv-cards">
+          <article class="jv-voice glass">
+            <canvas id="voice-wave" aria-hidden="true"></canvas>
+            <div class="jv-voice-row">
+              <button class="jv-voice-btn" id="voice-mic" aria-label="Speak"><i></i></button>
+              <div><div class="jv-voice-title" id="voice-title">I'm listening..</div><div class="jv-voice-sub" id="voice-sub">Say something, or tap a suggestion.</div></div>
+            </div>
+          </article>
+          <article class="jv-actions glass">
+            <button class="jv-action" data-ask="Summarise my day"><svg viewBox="0 0 24 24"><path d="M6.5 3.5h8l4 4v13h-12z"/><path d="M14.5 3.5v4h4M9.5 11.5h6M9.5 14.5h6M9.5 17.5h4"/></svg><span>Summarise my day</span><b>›</b></button>
+            <button class="jv-action" data-ask="What do I have tomorrow, and what is due?"><svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></svg><span>Plan tomorrow</span><b>›</b></button>
+            <button class="jv-action" data-fill="Research "><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.3 15.3L20 20"/></svg><span>Research this</span><b>›</b></button>
+            <button class="jv-action" data-fill="Write "><svg viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5M6.3 6.3l2.4 2.4M15.3 15.3l2.4 2.4M17.7 6.3l-2.4 2.4M8.7 15.3l-2.4 2.4"/></svg><span>Create something</span><b>›</b></button>
+          </article>
+          <article class="jv-systems glass">
+            <i class="jv-mini-orb"></i>
+            <div>
+              <div class="jv-systems-title">Systems online</div>
+              <ul><li>Language<i></i></li><li>Voice<i></i></li><li>Hearing<i></i></li><li>Tools<i></i></li><li>Memory<i></i></li></ul>
+            </div>
+          </article>
+        </div>
+        <section class="jv-sheet glass" id="sheet" hidden>
+          <header><h3 class="jv-micro" id="sheet-title"></h3><button id="sheet-close" aria-label="Back">×</button></header>
+          <div class="jv-pane" data-pane="conversations"><ol id="log-list" class="jv-log"></ol><p class="jv-empty" id="log-empty">Nothing said yet.</p></div>
+          <div class="jv-pane" data-pane="tasks"><div class="jv-tiles"><div><b id="m-done">0</b><span>things done</span></div><div><b id="m-asked">0</b><span>you asked</span></div></div><ul id="task-list" class="jv-tasks"></ul><p class="jv-empty" id="tasks-empty">Nothing running.</p></div>
+          <div class="jv-pane" data-pane="knowledge"><ul id="found-list" class="jv-found"></ul><p class="jv-empty" id="found-empty">Sources from searches and the news appear here.</p></div>
+          <div class="jv-pane" data-pane="systems"><ul class="jv-rows"><li><span>Brain</span>Groq, with Gemini behind it</li><li><span>Voice</span>Gemini Live</li><li><span>Search</span>DuckDuckGo, Wikipedia, Google News</li><li><span>Memory</span>Saved for you only</li></ul></div>
+          <div class="jv-pane" data-pane="environment"><ul class="jv-rows"><li><span>Where</span>The web version. Laptop-only tools (apps, files, Canvas) live in the desktop app.</li><li><span>Privacy</span>Keys stay on the server; this page never sees them.</li></ul></div>
         </section>
       </aside>
-      <button class="restore-tasks glass" id="restore-tasks" aria-label="Open tasks" aria-controls="task-panel" aria-expanded="true" hidden><svg class="icon"><use href="#i-grid"/></svg><span>Tasks</span></button>
       <div class="toast glass" id="toast" role="status" aria-live="polite"></div>
       <div class="screen-reader-status" id="live-status" aria-live="polite"></div>
     </main>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/jarvis.js"></script>
   </body>
 </html>

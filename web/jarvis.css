@@ -1,0 +1,104 @@
+/*
+ * J.A.R.V.I.S.'s own panels, laid over the scene: navigation and system
+ * status on the left; the clock, the voice card, quick actions and systems on
+ * the right; a sheet for each section. VoiceOS's navy and blue.
+ */
+:root {
+  --jv-ink: #14203a;
+  --jv-ink-2: #2a3a58;
+  --jv-muted: #5d6b82;
+  --jv-blue: #2f6fd1;
+  --jv-amber: #c98a1d;
+}
+
+.jv-micro { margin: 0; font: 600 9px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: .32em; text-transform: uppercase; color: var(--jv-ink-2); }
+
+/* ---- left column ---- */
+.jv-left { position: absolute; left: 28px; top: 112px; bottom: 28px; width: 300px; display: flex; flex-direction: column; justify-content: space-between; z-index: 4; pointer-events: none; }
+.jv-left > * { pointer-events: auto; }
+.jv-nav { display: flex; flex-direction: column; gap: 2px; width: 236px; }
+.jv-nav-item { display: flex; align-items: center; gap: 14px; height: 38px; padding: 0 14px; border-radius: 20px; border: 1px solid transparent; background: none; color: var(--jv-ink-2); font: 400 14px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; text-align: left; transition: background .2s, box-shadow .2s; }
+.jv-nav-item svg { width: 19px; height: 19px; fill: none; stroke: #2d4466; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.jv-nav-item[data-view="home"] svg { stroke: var(--jv-ink); stroke-width: 2.6; }
+.jv-nav-item:hover { background: rgba(255,255,255,.35); }
+.jv-nav-item.is-active { height: 44px; background: linear-gradient(90deg, rgba(255,255,255,.85), rgba(255,255,255,.45)); border-color: rgba(255,255,255,.95); box-shadow: 0 4px 18px rgba(60,84,124,.12); color: var(--jv-ink); font-weight: 500; }
+
+.jv-status { position: relative; width: 300px; height: 150px; padding: 20px 0 0 22px; border-radius: 16px; }
+.jv-status canvas { position: absolute; left: 20px; top: 42px; width: 150px; height: 80px; }
+.jv-status ul { position: absolute; left: 184px; top: 40px; margin: 0; padding: 0; list-style: none; }
+.jv-status li { position: relative; height: 19px; padding-left: 16px; font: 600 8.5px/12px "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: .3em; text-transform: uppercase; color: var(--jv-ink-2); }
+.jv-status li::before { content: ""; position: absolute; left: 0; top: 2.5px; width: 6px; height: 6px; border-radius: 50%; background: var(--jv-ink); transition: background .25s, box-shadow .25s; }
+.jv-status li.is-on::before { background: var(--jv-blue); box-shadow: 0 0 0 3px rgba(47,111,209,.16); }
+
+/* ---- right column ---- */
+.jv-right { position: absolute; right: 24px; top: 22px; bottom: 28px; width: 330px; display: flex; flex-direction: column; gap: 18px; z-index: 4; }
+.jv-top { display: flex; align-items: center; gap: 18px; padding: 0 4px; }
+.jv-time { margin: 7px 0 8px; font: 300 30px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: .08em; color: var(--jv-ink); }
+.jv-rule { width: 1px; height: 58px; background: rgba(40,56,82,.3); }
+.jv-avatar { width: 46px; height: 46px; border: 0; border-radius: 50%; cursor: pointer; background: radial-gradient(circle at 36% 32%, #3c5680 0%, #142039 42%, #03060c 82%); box-shadow: 0 3px 10px rgba(10,18,34,.3); }
+html[data-state="thinking"] .jv-avatar, html[data-state="speaking"] .jv-avatar { box-shadow: 0 0 14px rgba(90,150,255,.6); }
+.jv-tools { display: flex; gap: 10px; margin-left: auto; }
+.jv-tools button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: none; display: grid; place-items: center; cursor: pointer; }
+.jv-tools button:hover { background: rgba(255,255,255,.55); }
+.jv-tools svg { width: 20px; height: 20px; fill: none; stroke: var(--jv-ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+.jv-cards { display: flex; flex-direction: column; gap: 16px; }
+.jv-voice { position: relative; height: 140px; border-radius: 16px; padding: 12px 18px; }
+.jv-voice canvas { width: 100%; height: 58px; display: block; }
+.jv-voice-row { display: flex; align-items: center; gap: 16px; margin-top: 6px; }
+.jv-voice-btn { flex: none; width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(40,56,82,.35); background: rgba(255,255,255,.4); display: grid; place-items: center; cursor: pointer; }
+.jv-voice-btn i { width: 21px; height: 21px; border-radius: 50%; background: radial-gradient(circle at 38% 34%, #2a3448, #05080f 70%); }
+html[data-state="listening"] .jv-voice-btn i { background: var(--jv-blue); }
+.jv-voice-title { font: 400 15px/1.2 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); }
+.jv-voice-sub { margin-top: 5px; font: 400 11.5px/1.3 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-muted); }
+
+.jv-actions { border-radius: 16px; padding: 10px 0; }
+.jv-action { display: flex; align-items: center; gap: 22px; width: 100%; height: 40px; padding: 0 20px 0 44px; border: 0; background: none; cursor: pointer; font: 400 14px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); text-align: left; }
+.jv-action:hover { background: rgba(255,255,255,.5); }
+.jv-action svg { width: 20px; height: 20px; flex: none; fill: none; stroke: #1d2c48; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.jv-action span { flex: 1; }
+.jv-action b { font-weight: 300; font-size: 22px; color: var(--jv-ink); }
+
+.jv-systems { display: flex; align-items: center; gap: 26px; border-radius: 16px; padding: 20px 24px; }
+.jv-mini-orb { flex: none; width: 84px; height: 84px; border-radius: 50%; background: radial-gradient(circle at 30% 24%, rgba(180,210,255,.55) 0%, transparent 28%), radial-gradient(circle at 42% 40%, #2b4c86 0%, #10203f 45%, #050a14 78%); box-shadow: 0 6px 22px rgba(40,80,150,.35); }
+.jv-systems > div { flex: 1; }
+.jv-systems-title { font: 500 14px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); margin-bottom: 10px; }
+.jv-systems ul { margin: 0; padding: 0; list-style: none; }
+.jv-systems li { display: flex; justify-content: space-between; align-items: center; height: 20px; font: 400 12px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink-2); }
+.jv-systems li i { width: 7px; height: 7px; border-radius: 50%; background: var(--jv-blue); }
+
+/* ---- the sheet, one per section ---- */
+.orbit-app:not([data-view="home"]) .jv-cards { visibility: hidden; }
+.jv-sheet { position: absolute; top: 96px; left: 0; right: 0; bottom: 0; border-radius: 16px; padding: 18px 0 10px; display: flex; flex-direction: column; animation: jv-rise .25s ease; }
+.jv-sheet[hidden] { display: none; }
+.jv-sheet header { display: flex; justify-content: space-between; align-items: center; padding: 0 18px 12px 22px; border-bottom: 1px solid rgba(40,56,82,.1); }
+.jv-sheet header button { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--jv-muted); cursor: pointer; }
+.jv-pane { flex: 1; overflow-y: auto; padding: 12px 22px; font: 400 13px/1.45 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); }
+.jv-empty { color: var(--jv-muted); font-size: 12px; }
+.jv-log { margin: 0; padding: 0; list-style: none; }
+.jv-log li { padding: 10px 0; border-bottom: 1px solid rgba(40,56,82,.08); }
+.jv-log .you { color: var(--jv-blue); margin-bottom: 4px; }
+.jv-log .him p { margin: 0 0 6px; }
+.jv-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.jv-tiles div { padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.5); }
+.jv-tiles b { display: block; font: 300 22px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.jv-tiles span { font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--jv-muted); }
+.jv-tasks, .jv-found, .jv-rows { margin: 0; padding: 0; list-style: none; }
+.jv-tasks li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid rgba(40,56,82,.08); }
+.jv-tasks .spin { flex: none; width: 11px; height: 11px; margin-top: 3px; border-radius: 50%; border: 1.5px solid rgba(47,111,209,.25); border-top-color: var(--jv-blue); animation: turn .9s linear infinite; }
+.jv-tasks li[data-done="yes"] .spin { animation: none; background: var(--jv-blue); border-color: var(--jv-blue); }
+.jv-tasks li[data-done="failed"] .spin { animation: none; background: #c8423b; border-color: #c8423b; }
+.jv-found li { padding: 8px 0; border-bottom: 1px solid rgba(40,56,82,.08); }
+.jv-found a { color: var(--jv-ink); }
+.jv-found small { display: block; color: var(--jv-muted); }
+.jv-rows li { display: grid; grid-template-columns: 80px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid rgba(40,56,82,.08); }
+.jv-rows span { font-size: 9px; letter-spacing: .24em; text-transform: uppercase; color: var(--jv-muted); padding-top: 3px; }
+@keyframes jv-rise { from { opacity: 0; transform: translateY(8px); } }
+
+/* ---- smaller screens: the scene and the conversation come first ---- */
+@media (max-width: 1180px) { .jv-status, .jv-systems { display: none; } .jv-left { width: 240px; } }
+@media (max-width: 920px) { .jv-left, .jv-right { display: none; } }
+
+/* The orb takes the centre of the name; its slot grows with it so R and V clear the edge. */
+.orbit-app .orbit-wordmark { width: min(50%, 820px); max-width: none; }
+.orbit-app .orbit-wordmark .core-letter { width: clamp(170px, 14vw, 250px); }
