@@ -25,7 +25,9 @@
     "bench:real": "node scripts/bench-latency-real.js"
   },
   "dependencies": {
+    "dompurify": "^3.4.17",
     "kokoro-js": "^1.2.1",
+    "marked": "^18.1.2",
     "ws": "^8.22.0"
   },
   "optionalDependencies": {
