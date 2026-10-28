@@ -48,6 +48,15 @@
         "web"
       ],
       "port": 4324
+    },
+    {
+      "name": "web-full",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/web-dev.js",
+        "4325"
+      ],
+      "port": 4325
     }
   ]
 }

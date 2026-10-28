@@ -176,7 +176,72 @@ function renderFound() {
   $('#found-empty').hidden = found.length > 0;
 }
 
-/** Asks the Jarvis server, and shows what comes back. */
+// --- talking to the server ------------------------------------------------------
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(body || {})
+  });
+  if (res.status === 401) { showSignIn(); throw new Error('Sign in first.'); }
+  if (res.status === 404 || res.status === 405) throw new Error('The Jarvis server is not connected to this site yet.');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `The server answered ${res.status}.`);
+  return data;
+}
+
+// --- memory, kept in this browser -------------------------------------------------
+/*
+ * What Jarvis remembers lives here, on this device, and is sent with each
+ * question so he can use it. The server learns from each exchange and says
+ * what to add or drop; it keeps nothing itself.
+ */
+const MEMORY_KEY = 'jv-memory';
+function loadMemory() { try { return JSON.parse(localStorage.getItem(MEMORY_KEY)) || []; } catch { return []; } }
+function saveMemory(list) { try { localStorage.setItem(MEMORY_KEY, JSON.stringify(list.slice(-200))); } catch { /* private mode */ } }
+let memory = loadMemory();
+function remember(facts = []) {
+  for (const f of facts) if (f && !memory.some((m) => m.toLowerCase() === String(f).toLowerCase())) memory.push(String(f));
+  saveMemory(memory);
+}
+function forget(about) {
+  const words = String(about || '').toLowerCase().split(/\W+/).filter((w) => w.length > 2);
+  if (!words.length) return;
+  memory = memory.filter((m) => !words.every((w) => m.toLowerCase().includes(w)));
+  saveMemory(memory);
+}
+async function learnFrom(question, answer) {
+  try {
+    const r = await post('/api/learn', { question, answer, memory: memory.slice(-60) });
+    const recent = memory.slice(-60);
+    const drop = new Set((r.remove || []).map((n) => recent[n - 1]));
+    if (drop.size) memory = memory.filter((m) => !drop.has(m));
+    remember(r.add || []);
+  } catch { /* learning is a bonus */ }
+}
+
+// --- speaking typed answers -------------------------------------------------------
+/** A British male voice from the browser, if it has one. Free, and on the device. */
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  const plain = String(text || '').replace(/[*_#`>]/g, '').replace(/\[(.*?)\]\(.*?\)/g, '$1').replace(/\s+/g, ' ').trim();
+  if (!plain) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(plain.slice(0, 900));
+  const voices = speechSynthesis.getVoices();
+  u.voice = voices.find((v) => /en-GB/i.test(v.lang) && /male|ryan|george|daniel|thomas|arthur/i.test(v.name))
+    || voices.find((v) => /en-GB/i.test(v.lang)) || voices.find((v) => /^en/i.test(v.lang)) || null;
+  u.rate = 1.05;
+  let pulse = null;
+  u.onstart = () => { setState('speaking'); pulse = setInterval(() => { speechLevel = 0.25 + Math.random() * 0.35; }, 120); };
+  u.onend = u.onerror = () => { clearInterval(pulse); speechLevel = 0; if (state === 'speaking') setState('idle'); };
+  speechSynthesis.speak(u);
+}
+
+/** Asks the Jarvis server, and shows (and says) what comes back. */
 async function ask(question) {
   const q = String(question || '').trim();
   if (!q) return;
@@ -191,23 +256,18 @@ async function ask(question) {
   setState('thinking');
   renderLog(); renderTasks();
   try {
-    const res = await fetch('/api/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ question: q })
-    });
-    if (res.status === 401) throw new Error('Sign in first: this Jarvis is password protected.');
-    if (res.status === 404) throw new Error('The Jarvis server is not connected to this site yet.');
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `The server answered ${res.status}.`);
+    const history = log.slice(1, 7).filter((e) => e.answer).reverse().map((e) => ({ question: e.question, answer: e.answer }));
+    const data = await post('/api/ask', { question: q, tz: TZ, history, memory: memory.slice(-60) });
     entry.answer = data.answer || 'Done.';
     rich($('#current-response'), entry.answer);
     $('#request-status').textContent = 'Done';
     for (const f of data.found || []) found.unshift(f);
+    if (data.memoryAdd && data.memoryAdd.length) remember(data.memoryAdd);
+    if (data.memoryForget) forget(data.memoryForget);
     task.done = true;
-    setState('speaking');
-    setTimeout(() => { if (state === 'speaking') setState('idle'); }, 2500);
+    setState('idle');
+    speak(entry.answer);
+    learnFrom(q, entry.answer);
   } catch (err) {
     entry.answer = err.message;
     rich($('#current-response'), err.message);
@@ -217,6 +277,177 @@ async function ask(question) {
   }
   renderLog(); renderTasks(); renderFound();
 }
+
+// --- voice: Gemini Live, straight from the browser --------------------------------
+/*
+ * The server hands over a single-use pass (never the key); the page connects
+ * to Gemini Live with it, streams the microphone, and plays the answer as it
+ * arrives. Tools Jarvis asks for run on the server. The microphone is only on
+ * while the voice session is; pressing the button again ends it.
+ */
+const LIVE_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
+let voice = null;
+
+function b64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); }
+
+async function startVoice() {
+  if (voice) { stopVoice(); return; }
+  setState('thinking', 'Connecting…');
+  try {
+    const pass = await post('/api/live-token', { tz: TZ, memory: memory.slice(-60) });
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    const ws = new WebSocket(`${LIVE_URL}?access_token=${encodeURIComponent(pass.token)}`);
+    const inCtx = new AudioContext();
+    const outCtx = new AudioContext({ sampleRate: 24000 });
+    const v = voice = { ws, mic, inCtx, outCtx, playAt: 0, sources: [], heard: '', said: '', idle: null };
+    const clean = (x) => (Array.isArray(x) ? x.map(clean) : x && typeof x === 'object'
+      ? Object.fromEntries(Object.entries(x).filter(([k]) => !['additionalProperties', '$schema', 'default'].includes(k)).map(([k, val]) => [k, clean(val)])) : x);
+
+    ws.onopen = () => ws.send(JSON.stringify({ setup: {
+      model: `models/${pass.model}`,
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } } },
+      systemInstruction: { parts: [{ text: pass.instruction }] },
+      tools: [{ functionDeclarations: pass.tools.map((t) => ({ name: t.name, description: t.description, parameters: clean(t.parameters) })) }],
+      inputAudioTranscription: {},
+      outputAudioTranscription: {}
+    } }));
+
+    ws.onmessage = async (ev) => {
+      const d = JSON.parse(typeof ev.data === 'string' ? ev.data : await ev.data.text());
+      if (d.setupComplete) { streamMic(v); setState('listening'); return; }
+      const sc = d.serverContent;
+      if (sc) {
+        if (sc.inputTranscription && sc.inputTranscription.text) { v.heard += sc.inputTranscription.text; $('#current-request').textContent = v.heard.trim(); }
+        if (sc.outputTranscription && sc.outputTranscription.text) { v.said += sc.outputTranscription.text; rich($('#current-response'), v.said.trim()); }
+        for (const part of (sc.modelTurn && sc.modelTurn.parts) || []) if (part.inlineData) play(v, part.inlineData.data);
+        if (sc.interrupted) { for (const src of v.sources) { try { src.stop(); } catch { /* done */ } } v.sources = []; v.playAt = 0; }
+        if (sc.turnComplete && (v.heard.trim() || v.said.trim())) {
+          const q = v.heard.trim(), a = v.said.trim();
+          log.unshift({ question: q || '(voice)', answer: a }); asked++;
+          renderLog(); renderTasks();
+          if (q && a) learnFrom(q, a);
+          v.heard = ''; v.said = '';
+        }
+      }
+      if (d.toolCall) {
+        setState('thinking');
+        const responses = [];
+        for (const call of d.toolCall.functionCalls || []) {
+          let r = { text: 'That did not work.' };
+          try { r = await post('/api/tool', { name: call.name, args: call.args || {}, tz: TZ }); } catch (err) { r = { text: err.message }; }
+          if (r.memoryAdd) remember(r.memoryAdd);
+          if (r.memoryForget) forget(r.memoryForget);
+          for (const f of r.found || []) found.unshift(f);
+          responses.push({ id: call.id, name: call.name, response: { result: r.text } });
+        }
+        renderFound();
+        ws.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
+      }
+    };
+    ws.onclose = () => { if (voice === v) stopVoice(); };
+    ws.onerror = () => { if (voice === v) { stopVoice(); setState('error', 'The voice connection dropped.'); } };
+  } catch (err) {
+    stopVoice();
+    setState('error', err.name === 'NotAllowedError' ? 'Allow the microphone to talk to Jarvis.' : err.message);
+  }
+}
+
+function streamMic(v) {
+  const source = v.inCtx.createMediaStreamSource(v.mic);
+  const node = v.inCtx.createScriptProcessor(4096, 1, 1);
+  const ratio = v.inCtx.sampleRate / 16000;
+  node.onaudioprocess = (e) => {
+    if (v.ws.readyState !== 1) return;
+    const input = e.inputBuffer.getChannelData(0);
+    const n = Math.floor(input.length / ratio);
+    const pcm = new Int16Array(n);
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      const x = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)]));
+      pcm[i] = x < 0 ? x * 0x8000 : x * 0x7fff;
+      sum += x * x;
+    }
+    if (state === 'listening') speechLevel = Math.min(1, Math.sqrt(sum / n) * 7);
+    v.ws.send(JSON.stringify({ realtimeInput: { audio: { data: b64(new Uint8Array(pcm.buffer)), mimeType: 'audio/pcm;rate=16000' } } }));
+  };
+  const mute = v.inCtx.createGain(); mute.gain.value = 0;
+  source.connect(node); node.connect(mute); mute.connect(v.inCtx.destination);
+  v.node = node;
+}
+
+function play(v, data) {
+  const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+  const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+  const buf = v.outCtx.createBuffer(1, pcm.length, 24000);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 0x8000;
+  const src = v.outCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(v.outCtx.destination);
+  const at = Math.max(v.outCtx.currentTime + 0.02, v.playAt);
+  src.start(at);
+  v.playAt = at + buf.duration;
+  v.sources.push(src);
+  setState('speaking');
+  speechLevel = 0.45;
+  src.onended = () => {
+    v.sources = v.sources.filter((s) => s !== src);
+    if (!v.sources.length && voice === v) { speechLevel = 0; setState('listening'); }
+  };
+}
+
+function stopVoice() {
+  const v = voice;
+  voice = null;
+  if (!v) return;
+  try { v.node && v.node.disconnect(); } catch { /* gone */ }
+  for (const t of v.mic ? v.mic.getTracks() : []) t.stop();
+  try { v.ws.close(); } catch { /* closed */ }
+  v.inCtx && v.inCtx.close().catch(() => {});
+  v.outCtx && v.outCtx.close().catch(() => {});
+  speechLevel = 0;
+  setState('idle');
+}
+
+$('#mic-button').addEventListener('click', () => startVoice());
+$('#voice-mic').addEventListener('click', () => startVoice());
+
+// --- signing in -----------------------------------------------------------------
+function showSignIn() { $('#signin').hidden = false; $('#signin-password').focus(); }
+$('#signin-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pw = $('#signin-password').value;
+  $('#signin-error').textContent = '';
+  try {
+    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ password: pw }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not sign in.');
+    $('#signin').hidden = true;
+    $('#signin-password').value = '';
+    afterSignIn();
+  } catch (err) { $('#signin-error').textContent = err.message; }
+});
+
+async function afterSignIn() {
+  // The weather under the clock: one quick tool call, no model involved.
+  try {
+    const r = await post('/api/tool', { name: 'weather', args: {}, tz: TZ });
+    const m = String(r.text || '').match(/(-?\d+°[FC]) and ([a-z ]+)/i);
+    if (m) $('#clock-sky').textContent = `${m[2]}  ${m[1]}`;
+  } catch { /* the clock does not need it */ }
+}
+
+(async () => {
+  try {
+    const res = await fetch('/api/session', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('no server');
+    const s = await res.json();
+    for (const li of document.querySelectorAll('.jv-systems li')) li.classList.toggle('is-off', /Voice/.test(li.textContent) ? !s.voice : !s.brain);
+    if (!s.signedIn) showSignIn(); else afterSignIn();
+  } catch {
+    $('#voice-sub').textContent = 'The Jarvis server is not connected to this site yet.';
+  }
+})();
 
 $('#composer').addEventListener('submit', (e) => {
   e.preventDefault();

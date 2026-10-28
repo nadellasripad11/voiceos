@@ -102,3 +102,15 @@ html[data-state="listening"] .jv-voice-btn i { background: var(--jv-blue); }
 /* The orb takes the centre of the name; its slot grows with it so R and V clear the edge. */
 .orbit-app .orbit-wordmark { width: min(50%, 820px); max-width: none; }
 .orbit-app .orbit-wordmark .core-letter { width: clamp(170px, 14vw, 250px); }
+
+/* ---- signing in ---- */
+.jv-signin { position: fixed; inset: 0; z-index: 900; display: grid; place-items: center; background: rgba(233,238,244,.55); backdrop-filter: blur(6px); }
+.jv-signin[hidden] { display: none; }
+.jv-signin-card { width: min(380px, 90vw); padding: 28px 28px 22px; border-radius: 20px; display: flex; flex-direction: column; gap: 12px; }
+.jv-signin-card h2 { margin: 4px 0 0; font: 300 26px/1.1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); }
+.jv-signin-card p { margin: 0; font: 400 13px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-muted); }
+.jv-signin-card input { height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid rgba(40,56,82,.2); background: rgba(255,255,255,.75); font: 400 15px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); outline: none; }
+.jv-signin-card input:focus { border-color: var(--jv-blue); }
+.jv-signin-card button { height: 44px; border: 0; border-radius: 12px; background: #0f264e; color: #fff; font: 500 14px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; }
+.jv-signin-error { color: #c8423b !important; min-height: 16px; }
+.jv-systems li.is-off i { background: #b7bfcb; }

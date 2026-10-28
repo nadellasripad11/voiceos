@@ -142,6 +142,16 @@
           <div class="jv-pane" data-pane="environment"><ul class="jv-rows"><li><span>Where</span>The web version. Laptop-only tools (apps, files, Canvas) live in the desktop app.</li><li><span>Privacy</span>Keys stay on the server; this page never sees them.</li></ul></div>
         </section>
       </aside>
+      <div class="jv-signin" id="signin" hidden>
+        <form class="jv-signin-card glass" id="signin-form" autocomplete="on">
+          <div class="jv-micro">J.A.R.V.I.S.</div>
+          <h2>Welcome back, sir.</h2>
+          <p>This Jarvis is private. Enter your password to continue.</p>
+          <input id="signin-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" required />
+          <button type="submit">Sign in</button>
+          <p class="jv-signin-error" id="signin-error" role="alert"></p>
+        </form>
+      </div>
       <div class="toast glass" id="toast" role="status" aria-live="polite"></div>
       <div class="screen-reader-status" id="live-status" aria-live="polite"></div>
     </main>
