@@ -106,7 +106,7 @@ export function createCoreField({radius=112}={}) {
         float coronaRgb=white+shade*.27*(1.-white);
         float alpha=black+coronaAlpha*(1.-black);
         float rgb=coronaRgb*(1.-black)/max(alpha,.0001);
-        gl_FragColor=vec4(vec3(rgb),alpha);
+        gl_FragColor=vec4(mix(vec3(.047,.11,.235),vec3(1.),rgb),alpha);
       }`;
     try {
       const compile=(type,source)=>{
@@ -196,7 +196,7 @@ export function createCoreField({radius=112}={}) {
       };
       // Primary remains sharp; separated graphite supports reveal the white light.
       contour(3.8,state.time);ctx.strokeStyle=lightGradient(.018,.598,'56,63,67');ctx.lineWidth=1.80;
-      ctx.shadowColor='rgba(43,65,97,.07)';ctx.shadowBlur=1.2;ctx.stroke();
+      ctx.shadowColor='rgba(41,62,99,.07)';ctx.shadowBlur=1.2;ctx.stroke();
       contour(1.55,state.time);ctx.strokeStyle=lightGradient(.020,.135*intensity);ctx.lineWidth=2.55;
       ctx.shadowColor='rgba(255,255,255,.13)';ctx.shadowBlur=1.9;ctx.stroke();
       contour(1.55,state.time);ctx.strokeStyle=lightGradient(.12,intensity);ctx.lineWidth=1.03;
@@ -246,7 +246,7 @@ export function createCoreField({radius=112}={}) {
           const bright=(.5+.5*Math.cos(angle+2.35))**4.5;
           const mask=(.18+.68*bright)*(.37+.63*(.5+.5*Math.cos(angle*3+echo*1.7))**2)*envelope;
           if(mask<.005)continue;
-          contour(offset+1.5,state.time,start,end);ctx.strokeStyle=`rgba(38,57,85,${mask*.39})`;ctx.lineWidth=1.30;ctx.stroke();
+          contour(offset+1.5,state.time,start,end);ctx.strokeStyle=`rgba(36,55,87,${mask*.39})`;ctx.lineWidth=1.30;ctx.stroke();
           contour(offset,state.time,start,end);ctx.strokeStyle=`rgba(255,255,255,${mask*.64})`;ctx.lineWidth=1.04;ctx.stroke();
         }
       }
@@ -254,7 +254,7 @@ export function createCoreField({radius=112}={}) {
         const progress=Math.max(0,Math.min(1,visual.completeProgress));
         const alpha=Math.sin(progress*Math.PI)*(1-progress)**.7*.42;
         ctx.shadowBlur=0;ctx.beginPath();ctx.arc(0,0,radius+5+progress*48,0,TAU);
-        ctx.strokeStyle=`rgba(40,60,90,${alpha*.32})`;ctx.lineWidth=1.1;ctx.stroke();
+        ctx.strokeStyle=`rgba(38,58,92,${alpha*.32})`;ctx.lineWidth=1.1;ctx.stroke();
         ctx.beginPath();ctx.arc(0,0,radius+3+progress*48,0,TAU);
         ctx.strokeStyle=`rgba(255,255,255,${alpha})`;ctx.lineWidth=1.25;ctx.stroke();
       }

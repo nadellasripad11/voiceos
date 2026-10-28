@@ -251,8 +251,8 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
       buffer[j*4]=q[0];buffer[j*4+1]=q[1];
     }
     const ink=ctx.createLinearGradient(buffer[0],buffer[1],buffer[count*4],buffer[count*4+1]);
-    ink.addColorStop(0,'rgba(14,28,50,0)');ink.addColorStop(.52,`rgba(14,28,50,${alpha*.28})`);
-    ink.addColorStop(1,`rgba(14,28,50,${alpha*.54})`);
+    ink.addColorStop(0,'rgba(30,46,74,0)');ink.addColorStop(.52,`rgba(30,46,74,${alpha*.28})`);
+    ink.addColorStop(1,`rgba(30,46,74,${alpha*.54})`);
     ctx.beginPath();
     for(let j=0;j<=count;j++) {
       const i=j*4,before=Math.max(0,j-1)*4,after=Math.min(count,j+1)*4;
@@ -346,11 +346,11 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
         if(foreground) {
           const ink=ctx.createLinearGradient(s[0],s[1],s[87*12],s[87*12+1]);
           const opacity=ribbon.inkStrength*weight*1.22,crest=strand<ribbon.strands*.5?.44:.68;
-          ink.addColorStop(0,`rgba(13,25,44,${opacity*.02})`);
-          ink.addColorStop(.20,`rgba(13,25,44,${opacity*.19})`);
-          ink.addColorStop(crest,`rgba(13,25,44,${opacity})`);
-          ink.addColorStop(.86,`rgba(13,25,44,${opacity*.48})`);
-          ink.addColorStop(1,`rgba(13,25,44,${opacity*.08})`);
+          ink.addColorStop(0,`rgba(16,41,84,${opacity*.02})`);
+          ink.addColorStop(.20,`rgba(16,41,84,${opacity*.19})`);
+          ink.addColorStop(crest,`rgba(16,41,84,${opacity})`);
+          ink.addColorStop(.86,`rgba(16,41,84,${opacity*.48})`);
+          ink.addColorStop(1,`rgba(16,41,84,${opacity*.08})`);
           ctx.strokeStyle=ink;ctx.lineWidth=strand<ribbon.strands*.5?(ribbon.inkStrength>=.7?1.3:1.0):.65;
         } else {
           ctx.strokeStyle=`rgba(${middle?'55,58,60':'105,109,113'},${ribbon.alpha*weight*(middle?.27:.06)})`;
@@ -360,13 +360,13 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
         if(foreground&&ribbon.inkStrength>=.4&&strand<ribbon.strands*.5) {
           for(const fraction of [.28,.48,.70]) {
             const q=ribbonEdge(ribbon,Math.round(fraction*87),offset);
-            ctx.beginPath();ctx.arc(q[0],q[1],.62,0,TAU);ctx.fillStyle=`rgba(12,24,41,${ribbon.inkStrength*.8})`;ctx.fill();
+            ctx.beginPath();ctx.arc(q[0],q[1],.62,0,TAU);ctx.fillStyle=`rgba(16,40,82,${ribbon.inkStrength*.8})`;ctx.fill();
           }
         }
       }
       if(n===0||n===2||n===3||n===5||n===7||n===9||n===12)drawRibbonSignal(ribbon,n,time);
     }
-    ctx.strokeStyle='rgba(56,84,126,.20)';ctx.lineWidth=.58;
+    ctx.strokeStyle='rgba(53,81,129,.20)';ctx.lineWidth=.58;
     for(let n=0;n<wavePaths.length;n++) {
       ctx.beginPath();
       for(let j=0;j<95;j+=sampleStep) {
@@ -437,7 +437,7 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
       const radius=126+surgeProgress*405;
       ctx.save();ctx.globalAlpha=surge;
       traceOrbit(radius,radius*.94,DISK_TILT,-3.03,2.8,.22);
-      ctx.lineWidth=2.4;ctx.strokeStyle='rgba(19,38,67,.17)';ctx.stroke();
+      ctx.lineWidth=2.4;ctx.strokeStyle='rgba(14,35,72,.17)';ctx.stroke();
       ctx.lineWidth=.8;ctx.strokeStyle='rgba(255,255,255,.62)';ctx.stroke();ctx.restore();
     }
     const count=width<=600?14:24,trailCount=width<=600?4:photonTrails.length;
@@ -451,8 +451,8 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
       }
       const bright=(1+Math.cos(Math.atan2(buffer[count*2+1],buffer[count*2])-BRIGHT_ANGLE))*.5;
       const ink=ctx.createLinearGradient(buffer[0],buffer[1],buffer[count*2],buffer[count*2+1]);
-      ink.addColorStop(0,'rgba(16,31,54,0)');ink.addColorStop(.6,`rgba(16,31,54,${.20+bright*.14})`);
-      ink.addColorStop(1,`rgba(16,31,54,${.44+bright*.16})`);
+      ink.addColorStop(0,'rgba(31,48,77,0)');ink.addColorStop(.6,`rgba(31,48,77,${.20+bright*.14})`);
+      ink.addColorStop(1,`rgba(31,48,77,${.44+bright*.16})`);
       ctx.beginPath();ctx.moveTo(buffer[0],buffer[1]);for(let j=1;j<=count;j++)ctx.lineTo(buffer[j*2],buffer[j*2+1]);
       ctx.lineWidth=3.1;ctx.strokeStyle=ink;ctx.stroke();
       const light=ctx.createLinearGradient(buffer[0],buffer[1],buffer[count*2],buffer[count*2+1]);
@@ -465,8 +465,8 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
       const progress=(time*.13+wave*.5)%1,radius=180+progress**1.08*205;
       const alpha=Math.sin(progress*Math.PI)*.16;
       const shade=ctx.createLinearGradient(-radius,-radius,radius,radius);
-      shade.addColorStop(0,`rgba(22,44,78,${alpha})`);shade.addColorStop(.55,`rgba(22,44,78,${alpha*.5})`);
-      shade.addColorStop(1,`rgba(22,44,78,${alpha*.08})`);
+      shade.addColorStop(0,`rgba(16,41,84,${alpha})`);shade.addColorStop(.55,`rgba(16,41,84,${alpha*.5})`);
+      shade.addColorStop(1,`rgba(16,41,84,${alpha*.08})`);
       for(const range of [[-2.98,-.36],[.42,2.57]]) {
         traceOrbit(radius,radius*.93,DISK_TILT+wave*.12,range[0],range[1],.20);
         ctx.lineWidth=1.15;ctx.strokeStyle=shade;ctx.stroke();
@@ -480,23 +480,23 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
       const radius = 134 + ring * 8.1;
       const rotation = ring * .28 + time * (ring % 2 ? .075 : -.062);
       traceOrbit(radius,radius*(.97-(ring%5)*.012),rotation,.10+ring*.31,4.5+ring*.30);
-      ctx.strokeStyle = `rgba(62,93,139,${ring % 3 === 0 ? .095 : .048})`;
+      ctx.strokeStyle = `rgba(58,89,143,${ring % 3 === 0 ? .095 : .048})`;
       ctx.stroke();
     }
     // Inclined orbital ellipses bring a scientific wire-frame quality to the halo.
     for (let i = 0; i < 3; i++) {
       traceOrbit(195-i*6,73+i*12,i*.47+.2+time*.024,.2,TAU-.26);
-      ctx.strokeStyle = `rgba(70,104,156,${i % 2 ? .035 : .055})`;
+      ctx.strokeStyle = `rgba(66,100,160,${i % 2 ? .035 : .055})`;
       ctx.lineWidth = .42; ctx.stroke();
     }
     ctx.beginPath(); ctx.moveTo(0,-244); ctx.lineTo(0,237);
-    ctx.strokeStyle = 'rgba(43,65,97,.17)'; ctx.lineWidth = .45; ctx.stroke();
+    ctx.strokeStyle = 'rgba(41,62,99,.17)'; ctx.lineWidth = .45; ctx.stroke();
     ctx.setLineDash([1, 13]);
     ctx.beginPath(); ctx.moveTo(-350,0); ctx.lineTo(258,0);
-    ctx.strokeStyle = 'rgba(51,76,113,.15)'; ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(48,73,116,.15)'; ctx.stroke(); ctx.setLineDash([]);
     for (const y of [-190,-153,-135,135,168]) {
       ctx.beginPath(); ctx.arc(0,y,y === -135 ? 1.7 : 2.8,0,TAU);
-      ctx.fillStyle = 'rgba(9,19,33,.46)'; ctx.fill();
+      ctx.fillStyle = 'rgba(15,37,77,.46)'; ctx.fill();
     }
     const particleStep=width<=600?2:1;
     for(let i=0;i<particles.length;i+=particleStep) {
@@ -512,12 +512,12 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
           headX=q[0];headY=q[1];
         }
         const shade=ctx.createLinearGradient(tailX,tailY,headX,headY);
-        shade.addColorStop(0,'rgba(12,24,42,0)');shade.addColorStop(1,`rgba(12,24,42,${particle.alpha*.68})`);
+        shade.addColorStop(0,'rgba(16,40,83,0)');shade.addColorStop(1,`rgba(16,40,83,${particle.alpha*.68})`);
         ctx.strokeStyle=shade;ctx.lineWidth=.65;ctx.stroke();
       }
       const p = filamentWarp(Math.cos(a) * r, Math.sin(a) * r * particle.squash, .7);
       ctx.beginPath(); ctx.arc(p[0],p[1],particle.size,0,TAU);
-      ctx.fillStyle = `rgba(11,21,37,${particle.alpha})`; ctx.fill();
+      ctx.fillStyle = `rgba(15,39,80,${particle.alpha})`; ctx.fill();
     }
     for(let i=0;i<dust.length;i+=particleStep) {
       const particle=dust[i];
@@ -527,11 +527,11 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
       const p = filamentWarp(Math.cos(angle)*radius+Math.sin(time*.38+particle.phase)*8,
         Math.sin(angle)*radius+Math.cos(time*.32+particle.phase)*7,.6);
       ctx.beginPath(); ctx.arc(p[0],p[1],particle.radius,0,TAU);
-      ctx.fillStyle = `rgba(18,36,64,${particle.alpha*Math.sin(progress*Math.PI)**.6})`; ctx.fill();
+      ctx.fillStyle = `rgba(13,34,69,${particle.alpha*Math.sin(progress*Math.PI)**.6})`; ctx.fill();
     }
     for (const satellite of satellites) {
       traceOrbit(satellite.a,satellite.b,satellite.tilt,0,TAU,.28);
-      ctx.strokeStyle = 'rgba(54,81,121,.15)'; ctx.lineWidth = .45; ctx.stroke();
+      ctx.strokeStyle = 'rgba(51,78,124,.15)'; ctx.lineWidth = .45; ctx.stroke();
     }
   }
   function drawCore(surface) {
@@ -555,7 +555,7 @@ export function createSingularity(canvas, { getEnergy = () => 0, getSpeechLevel 
     ctx.fillStyle = flare; ctx.fillRect(x-27,y-27,54,54);
     ctx.strokeStyle = 'rgba(255,255,255,.42)'; ctx.lineWidth = .6;
     ctx.beginPath(); ctx.moveTo(x-20,y); ctx.lineTo(x+20,y); ctx.moveTo(x,y-23); ctx.lineTo(x,y+23); ctx.stroke();
-    ctx.beginPath(); ctx.arc(202,-166,4.2,0,TAU); ctx.fillStyle = 'rgba(54,81,121,.36)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(202,-166,4.2,0,TAU); ctx.fillStyle = 'rgba(51,78,124,.36)'; ctx.fill();
   }
   function render(timestamp) {
     frame=0;

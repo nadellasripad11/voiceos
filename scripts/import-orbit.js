@@ -23,9 +23,13 @@ function tint(r, g, b) {
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   if (max - min > 24) return [r, g, b];          // already a colour: leave it
   if (r === 255 && g === 255 && b === 255) return [r, g, b];
-  const l = (max + min) / 510;
-  const h = 216 / 360;
-  const s = l < 0.2 ? 0.55 : l < 0.5 ? 0.38 : l < 0.85 ? 0.22 : 0.3;
+  let l = (max + min) / 510;
+  const h = 218 / 360;
+  // Black has no hue to keep, so it would stay black. It becomes a deep blue
+  // instead — the orb, the dark text, the active controls — lifted just
+  // enough for the blue to show while staying the darkest thing on screen.
+  if (l < 0.16) l = 0.13 + l * 0.6;
+  const s = l < 0.2 ? 0.68 : l < 0.5 ? 0.42 : l < 0.85 ? 0.22 : 0.3;
   const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
   const p = 2 * l - q;
   const ch = (t) => {
@@ -71,11 +75,27 @@ function rename(text, file) {
   return t;
 }
 
+/** Layout changes the name needs: seven slots (J A R, the orb, V I S) instead of five. */
+function layout(text, file) {
+  // The orb is drawn by a shader in grey: one brightness, black at the centre.
+  // It blends from VoiceOS navy to white instead, so the core is deep blue
+  // and its glowing rim stays white.
+  if (file === 'core-field.js') {
+    return text.replace('gl_FragColor=vec4(vec3(rgb),alpha);', 'gl_FragColor=vec4(mix(vec3(.047,.11,.235),vec3(1.),rgb),alpha);');
+  }
+  if (file !== 'style.css') return text;
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace('width: 35.1%; max-width: 590px; min-width: 460px;', 'width: 44%; max-width: 740px; min-width: 560px;')
+    .replace(/\.orbit-wordmark span:nth-child\((2|4)\) \{ transform: translateX\(-?\d+px\); \}\n/g, '')
+    .replace(/\.orbit-wordmark \.core-letter \{ position: relative; left: 6px;([^}]*)\}/, '.orbit-wordmark .core-letter { position: relative; width: 120px;$1}');
+}
+
 fs.mkdirSync(path.join(OUT, 'assets'), { recursive: true });
 for (const f of FILES) {
   let text = fs.readFileSync(path.join(SRC, f), 'utf8');
   if (/\.(css|js|html|svg)$/.test(f)) text = recolour(text);
-  text = rename(text, f);
+  text = layout(rename(text, f), f);
   fs.writeFileSync(path.join(OUT, f), text);
 }
 for (const a of fs.readdirSync(path.join(SRC, 'assets'))) {

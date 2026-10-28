@@ -111,7 +111,7 @@ export function playStartup(app) {
       `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-videoWidth/2} ${-videoHeight/2} ${videoWidth} ${videoHeight}"><defs><filter id="soft"><feGaussianBlur stdDeviation="3"/></filter></defs><g filter="url(#soft)" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" stroke-width="${deposit*deposit*360}">${depositPaths}</g></svg>`)}")`;
     const revealRadius = 112 * layout.scale * 5.28 * (1-handoff*.78);
     const revealFeather = 112 * layout.scale * .35;
-    const horizonMask = `${materialMask}, radial-gradient(circle at center, #000000 ${revealRadius-revealFeather}px, rgba(0,0,0,.5) ${revealRadius}px, transparent ${revealRadius+revealFeather}px)`;
+    const horizonMask = `${materialMask}, radial-gradient(circle at center, #0b1b38 ${revealRadius-revealFeather}px, rgba(11,27,56,.5) ${revealRadius}px, transparent ${revealRadius+revealFeather}px)`;
     video.style.maskImage = horizonMask;
     video.style.webkitMaskImage = horizonMask;
     video.style.maskComposite = 'intersect';
@@ -127,7 +127,7 @@ export function playStartup(app) {
     // its rim. Keep the footage separate so the page reveal cannot cut it off.
     const radius = (farthest + 150) * (1-handoff) + 112 * layout.scale * handoff;
     const feather = 100 + handoff * 70;
-    const mask = `radial-gradient(circle at ${layout.x}px ${layout.y}px, #000000 ${Math.max(0,radius-feather)}px, rgba(0,0,0,.5) ${radius}px, transparent ${radius+feather}px)`;
+    const mask = `radial-gradient(circle at ${layout.x}px ${layout.y}px, #0b1b38 ${Math.max(0,radius-feather)}px, rgba(11,27,56,.5) ${radius}px, transparent ${radius+feather}px)`;
     backdrop.style.maskImage = mask;
     backdrop.style.webkitMaskImage = mask;
     backdrop.style.opacity = String(1-coreMerge);
@@ -167,7 +167,7 @@ export function playStartup(app) {
   gradient.setAttribute('id', 'startup-rim-gradient');
   gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
   gradient.setAttribute('cx', '0'); gradient.setAttribute('cy', '0'); gradient.setAttribute('r', '136');
-  for (const [offset,color] of [['84%','#000000'],['100%','#ffffff']]) {
+  for (const [offset,color] of [['84%','#0b1b38'],['100%','#ffffff']]) {
     const stop = document.createElementNS(ns, 'stop');
     stop.setAttribute('offset', offset); stop.setAttribute('stop-color', color); gradient.append(stop);
   }
