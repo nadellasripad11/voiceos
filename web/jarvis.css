@@ -114,3 +114,14 @@ html[data-state="listening"] .jv-voice-btn i { background: var(--jv-blue); }
 .jv-signin-card button { height: 44px; border: 0; border-radius: 12px; background: #0f264e; color: #fff; font: 500 14px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; }
 .jv-signin-error { color: #c8423b !important; min-height: 16px; }
 .jv-systems li.is-off i { background: #b7bfcb; }
+
+/* ---- the laptop: live view and approvals ---- */
+.jv-laptop { position: fixed; left: 28px; bottom: 28px; width: 360px; z-index: 50; padding: 14px; border-radius: 18px; display: flex; flex-direction: column; gap: 10px; }
+.jv-laptop[hidden], .jv-laptop [hidden] { display: none; }
+.jv-laptop img { width: 100%; border-radius: 10px; border: 1px solid rgba(40,56,82,.15); }
+.jv-laptop-url { margin: 0; font: 400 11px/1.3 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jv-approve { display: flex; flex-direction: column; gap: 6px; font: 400 13px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); }
+.jv-approve p { margin: 0; color: var(--jv-muted); white-space: pre-wrap; max-height: 140px; overflow: auto; }
+.jv-approve div { display: flex; gap: 8px; justify-content: flex-end; }
+.jv-approve button { height: 34px; padding: 0 16px; border-radius: 10px; border: 1px solid rgba(40,56,82,.2); background: rgba(255,255,255,.8); cursor: pointer; font: 500 13px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.jv-approve button.yes { background: #0f264e; color: #fff; border-color: #0f264e; }

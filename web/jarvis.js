@@ -194,30 +194,44 @@ async function post(path, body) {
 
 // --- memory, kept in this browser -------------------------------------------------
 /*
- * What Jarvis remembers lives here, on this device, and is sent with each
- * question so he can use it. The server learns from each exchange and says
- * what to add or drop; it keeps nothing itself.
+ * What Jarvis remembers is kept on the server (shared with the desktop app)
+ * and cached here, and sent with each question so he can use it.
  */
 const MEMORY_KEY = 'jv-memory';
 function loadMemory() { try { return JSON.parse(localStorage.getItem(MEMORY_KEY)) || []; } catch { return []; } }
 function saveMemory(list) { try { localStorage.setItem(MEMORY_KEY, JSON.stringify(list.slice(-200))); } catch { /* private mode */ } }
 let memory = loadMemory();
 function remember(facts = []) {
-  for (const f of facts) if (f && !memory.some((m) => m.toLowerCase() === String(f).toLowerCase())) memory.push(String(f));
+  const add = [];
+  for (const f of facts) if (f && !memory.some((m) => m.toLowerCase() === String(f).toLowerCase())) { memory.push(String(f)); add.push(String(f)); }
   saveMemory(memory);
+  if (add.length) post('/api/memory', { add }).catch(() => {});
+}
+function drop(list) {
+  if (!list.length) return;
+  memory = memory.filter((m) => !list.includes(m));
+  saveMemory(memory);
+  post('/api/memory', { remove: list }).catch(() => {});
 }
 function forget(about) {
   const words = String(about || '').toLowerCase().split(/\W+/).filter((w) => w.length > 2);
-  if (!words.length) return;
-  memory = memory.filter((m) => !words.every((w) => m.toLowerCase().includes(w)));
-  saveMemory(memory);
+  if (words.length) drop(memory.filter((m) => words.every((w) => m.toLowerCase().includes(w))));
+}
+/** On sign-in: anything only this browser knew goes up, then the shared list is the one. */
+async function syncMemory() {
+  try {
+    const { facts } = await (await fetch('/api/memory', { credentials: 'same-origin' })).json();
+    const missing = memory.filter((m) => !facts.includes(m));
+    const r = missing.length ? await post('/api/memory', { add: missing }) : { facts };
+    memory = r.facts || facts;
+    saveMemory(memory);
+  } catch { /* the cached list still works */ }
 }
 async function learnFrom(question, answer) {
   try {
     const r = await post('/api/learn', { question, answer, memory: memory.slice(-60) });
     const recent = memory.slice(-60);
-    const drop = new Set((r.remove || []).map((n) => recent[n - 1]));
-    if (drop.size) memory = memory.filter((m) => !drop.has(m));
+    drop((r.remove || []).map((n) => recent[n - 1]).filter(Boolean));
     remember(r.add || []);
   } catch { /* learning is a bonus */ }
 }
@@ -285,13 +299,15 @@ async function ask(question) {
   try {
     const history = log.slice(1, 7).filter((e) => e.answer).reverse().map((e) => ({ question: e.question, answer: e.answer }));
     const data = await post('/api/ask', { question: q, tz: TZ, history, memory: memory.slice(-60) });
+    if (data.look) data.answer = await lookAndAnswer(data.look);
+    if (data.pendingJob) watchJob(data.pendingJob, entry, task);
     entry.answer = data.answer || 'Done.';
     rich($('#current-response'), entry.answer);
     $('#request-status').textContent = 'Done';
     for (const f of data.found || []) found.unshift(f);
     if (data.memoryAdd && data.memoryAdd.length) remember(data.memoryAdd);
     if (data.memoryForget) forget(data.memoryForget);
-    task.done = true;
+    task.done = !data.pendingJob;
     setState('idle');
     speak(entry.answer);
     learnFrom(q, entry.answer);
@@ -303,6 +319,83 @@ async function ask(question) {
     setState('error', err.message);
   }
   renderLog(); renderTasks(); renderFound();
+}
+
+// --- the camera -------------------------------------------------------------------
+/** One frame from the webcam, then the camera goes off again. */
+async function captureFrame() {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+  try {
+    const video = document.createElement('video');
+    video.muted = true; video.playsInline = true; video.srcObject = stream;
+    await video.play();
+    await new Promise((r) => setTimeout(r, 600)); // let exposure settle
+    const scale = Math.min(1, 960 / video.videoWidth);
+    const c = document.createElement('canvas');
+    c.width = Math.round(video.videoWidth * scale); c.height = Math.round(video.videoHeight * scale);
+    c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.8);
+  } finally { stream.getTracks().forEach((t) => t.stop()); }
+}
+async function lookAndAnswer(question) {
+  try {
+    const image = await captureFrame();
+    return (await post('/api/look', { image, question })).answer;
+  } catch (err) {
+    return /denied|NotAllowed/i.test(err.name + err.message) ? 'I need permission to use the camera, sir.' : `I could not use the camera: ${err.message}`;
+  }
+}
+
+// --- the laptop: jobs, approvals, and the browser's live view -----------------------
+const laptopPanel = document.createElement('section');
+laptopPanel.className = 'jv-laptop glass';
+laptopPanel.hidden = true;
+laptopPanel.innerHTML = '<header class="jv-micro">On your laptop</header><img alt="What the laptop browser shows" hidden /><p class="jv-laptop-url"></p><div class="jv-approve" hidden><b></b><p></p><div><button class="no" type="button">Decline</button><button class="yes" type="button">Approve</button></div></div>';
+document.body.append(laptopPanel);
+const watching = new Set();
+
+async function watchJob(id, entry, task, { quiet = false } = {}) {
+  if (watching.has(id)) return;
+  watching.add(id);
+  laptopPanel.hidden = false;
+  const img = laptopPanel.querySelector('img'), approve = laptopPanel.querySelector('.jv-approve');
+  const until = Date.now() + 10 * 60000;
+  try {
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 2000));
+      let s;
+      try { s = await (await fetch(`/api/laptop?job=${encodeURIComponent(id)}`, { credentials: 'same-origin' })).json(); } catch { continue; }
+      const job = s.job;
+      if (!job) break;
+      if (s.frame) { img.src = `data:image/jpeg;base64,${s.frame.data}`; img.hidden = false; laptopPanel.querySelector('.jv-laptop-url').textContent = s.frame.url; }
+      if (job.status === 'confirm') {
+        approve.hidden = false;
+        approve.querySelector('b').textContent = job.title || 'Approve this?';
+        approve.querySelector('p').textContent = job.detail || '';
+        speak(job.title || 'I need your approval, sir.');
+        const yes = await new Promise((resolve) => {
+          approve.querySelector('.yes').onclick = () => resolve(true);
+          approve.querySelector('.no').onclick = () => resolve(false);
+        });
+        approve.hidden = true;
+        await post('/api/laptop/answer', { id, yes }).catch(() => {});
+      }
+      if (job.status === 'done') {
+        const r = job.result || { answer: 'Done.' };
+        entry.answer = r.answer;
+        for (const f of r.found || []) found.unshift(f);
+        rich($('#current-response'), r.answer);
+        $('#request-status').textContent = 'Done on your laptop';
+        if (task) task.done = true;
+        if (!quiet || !voice) speak(r.answer);
+        renderLog(); renderTasks(); renderFound();
+        break;
+      }
+    }
+  } finally {
+    watching.delete(id);
+    if (!watching.size) { laptopPanel.hidden = true; img.hidden = true; img.removeAttribute('src'); }
+  }
 }
 
 // --- voice: Gemini Live, straight from the browser --------------------------------
@@ -362,6 +455,8 @@ async function startVoice() {
         for (const call of d.toolCall.functionCalls || []) {
           let r = { text: 'That did not work.' };
           try { r = await post('/api/tool', { name: call.name, args: call.args || {}, tz: TZ }); } catch (err) { r = { text: err.message }; }
+          if (r.look) r.text = `Through the camera: ${await lookAndAnswer(r.look)}`;
+          if (r.pendingJob) watchJob(r.pendingJob, { question: (call.args && call.args.task) || 'laptop task', answer: '' }, null, { quiet: true });
           if (r.memoryAdd) remember(r.memoryAdd);
           if (r.memoryForget) forget(r.memoryForget);
           for (const f of r.found || []) found.unshift(f);
@@ -457,6 +552,7 @@ $('#signin-form').addEventListener('submit', async (e) => {
 });
 
 async function afterSignIn() {
+  syncMemory();
   // The weather under the clock: one quick tool call, no model involved.
   try {
     const r = await post('/api/tool', { name: 'weather', args: {}, tz: TZ });

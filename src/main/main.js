@@ -91,6 +91,8 @@ const pendingConfirms = new Map();
 
 /** Asks the user to approve an action and resolves with their answer. */
 function requestConfirmation({ title, detail, timeoutMs = 120000 }) {
+  // A job from the website is approved on the website, where the person is.
+  if (services.webLink && services.webLink.job) return services.webLink.confirm({ title, detail });
   const id = `confirm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -1943,9 +1945,29 @@ function learnFrom(question, answer) {
   services.memory.learn({ question, answer, provider: brain.provider, model: brain.model }).catch(() => {});
 }
 
+/** Takes jobs from the website, if credentials.json has a webLink. */
+function startWebLink() {
+  const link = readCredentials().webLink;
+  if (!link || !link.url || !link.token) return;
+  const { WebLink } = require('./web-link');
+  services.webLink = new WebLink({
+    url: link.url,
+    token: link.token,
+    memory: services.memory,
+    logger,
+    run: async (task) => {
+      const result = await services.agent.run(task, {});
+      broadcast('agent-result', { ...result, question: `(from the website) ${task}` });
+      return result;
+    }
+  }).start();
+  logger.info(`[web-link] taking jobs from ${link.url}`);
+}
+
 /** The browser agent's tab, to the console's live view, thinned to ~6fps. */
 let lastFrameAt = 0;
 function forwardBrowserFrame(frame) {
+  if (services.webLink) services.webLink.frame(frame);
   if (frame && frame.done) { broadcast('browser-frame', { done: true }); return; }
   const now = Date.now();
   if (now - lastFrameAt < 160) return;
@@ -2383,6 +2405,7 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     if (!config.get('onboarded')) createOnboarding();
+    startWebLink();
 
     logger.info(`VoiceOS ${app.getVersion()} ready`);
   });
@@ -2395,6 +2418,7 @@ if (!app.requestSingleInstanceLock()) {
     globalShortcut.unregisterAll();
     if (holdToTalk) holdToTalk.shutdown();
     if (services.bridge) services.bridge.stop();
+    if (services.webLink) services.webLink.stop();
   });
 }
 
