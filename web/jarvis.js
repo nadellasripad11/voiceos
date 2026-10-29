@@ -520,17 +520,9 @@ async function startVoice() {
     const inCtx = new AudioContext();
     const outCtx = new AudioContext({ sampleRate: 24000 });
     const v = voice = { ws, mic, inCtx, outCtx, playAt: 0, sources: [], heard: '', said: '', idle: null };
-    const clean = (x) => (Array.isArray(x) ? x.map(clean) : x && typeof x === 'object'
-      ? Object.fromEntries(Object.entries(x).filter(([k]) => !['additionalProperties', '$schema', 'default'].includes(k)).map(([k, val]) => [k, clean(val)])) : x);
 
-    ws.onopen = () => ws.send(JSON.stringify({ setup: {
-      model: `models/${pass.model}`,
-      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } } },
-      systemInstruction: { parts: [{ text: pass.instruction }] },
-      tools: [{ functionDeclarations: pass.tools.map((t) => ({ name: t.name, description: t.description, parameters: clean(t.parameters) })) }],
-      inputAudioTranscription: {},
-      outputAudioTranscription: {}
-    } }));
+    // The same setup the pass was made with (the server builds it).
+    ws.onopen = () => ws.send(JSON.stringify({ setup: pass.setup }));
 
     ws.onmessage = async (ev) => {
       const d = JSON.parse(typeof ev.data === 'string' ? ev.data : await ev.data.text());

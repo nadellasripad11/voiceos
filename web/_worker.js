@@ -401,6 +401,16 @@ async function liveToken(request, env) {
   const body = await request.json().catch(() => ({}));
   const ctx = context(request, body, env);
   const now = Date.now();
+  // The whole setup goes into the pass: Gemini holds the session to it and
+  // ignores what the page sends, so a pass with only the model has no tools.
+  const setup = {
+    model: `models/${LIVE_MODEL}`,
+    generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } } } },
+    systemInstruction: { parts: [{ text: `RESPOND IN ENGLISH. YOU MUST RESPOND UNMISTAKABLY IN ENGLISH, whatever language you hear. Speak in one or two short sentences.\n${SYSTEM(ctx.text)}` }] },
+    tools: [{ functionDeclarations: TOOLS }],
+    inputAudioTranscription: {},
+    outputAudioTranscription: {}
+  };
   const res = await fetch('https://generativelanguage.googleapis.com/v1beta/auth_tokens', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
@@ -408,17 +418,12 @@ async function liveToken(request, env) {
       uses: 1,
       expireTime: new Date(now + 30 * 60000).toISOString(),
       newSessionExpireTime: new Date(now + 60000).toISOString(),
-      bidiGenerateContentSetup: { model: `models/${LIVE_MODEL}` }
+      bidiGenerateContentSetup: setup
     })
   });
   const tok = await res.json().catch(() => ({}));
   if (!res.ok || !tok.name) return json({ error: 'Could not start the voice session.' }, 502);
-  return json({
-    token: tok.name,
-    model: LIVE_MODEL,
-    instruction: `RESPOND IN ENGLISH. YOU MUST RESPOND UNMISTAKABLY IN ENGLISH, whatever language you hear. Speak in one or two short sentences.\n${SYSTEM(ctx.text)}`,
-    tools: TOOLS
-  });
+  return json({ token: tok.name, setup });
 }
 
 // --- the laptop link -------------------------------------------------------------
