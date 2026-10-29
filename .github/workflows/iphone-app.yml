@@ -7,7 +7,7 @@ on: workflow_dispatch
 
 jobs:
   ipa:
-    runs-on: macos-15
+    runs-on: macos-26
     defaults:
       run:
         working-directory: mobile
@@ -20,12 +20,14 @@ jobs:
       - run: npx expo prebuild --platform ios --no-install
       - run: cd ios && pod install
       - name: Build (unsigned)
-        run: >
-          xcodebuild -workspace ios/Jarvis.xcworkspace -scheme Jarvis
-          -configuration Release -sdk iphoneos -derivedDataPath build
-          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" | tail -40
-          ; test -d build/Build/Products/Release-iphoneos/Jarvis.app
-      - run: mkdir Payload && cp -R build/Build/Products/Release-iphoneos/Jarvis.app Payload/ && zip -qry Jarvis.ipa Payload
+        run: |
+          xcodebuild -version
+          xcodebuild -workspace ios/Jarvis.xcworkspace -scheme Jarvis \
+            -configuration Release -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" > build.log 2>&1 \
+            || { grep -E -B2 -A8 'error:|\*\* BUILD FAILED' build.log | head -150; exit 1; }
+          test -f build/Build/Products/Release-iphoneos/Jarvis.app/main.jsbundle
+      - run: mkdir Payload && cp -R build/Build/Products/Release-iphoneos/Jarvis.app Payload/ && zip -qr Jarvis.ipa Payload && ls -la Jarvis.ipa
       - uses: actions/upload-artifact@v4
         with:
           name: Jarvis-ipa
