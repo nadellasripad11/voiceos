@@ -14,3 +14,6 @@ userdata/
 voiceos.ico
 voice-samples/
 jarvis-website.zip
+
+# The website ships its two libraries; this vendor folder is not the native one.
+!web/vendor/
