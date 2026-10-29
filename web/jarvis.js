@@ -26,7 +26,6 @@ createSingularity($('#singularity'), {
   getSpeechLevel: () => speechLevel,
   getState: () => state
 });
-playStartup(app);
 
 const PHASES = {
   idle: ["I'm listening..", 'Say something, or tap a suggestion.'],
@@ -424,6 +423,7 @@ $('#signin-form').addEventListener('submit', async (e) => {
     if (!res.ok) throw new Error(data.error || 'Could not sign in.');
     $('#signin').hidden = true;
     $('#signin-password').value = '';
+    if (!started) begin();
     afterSignIn();
   } catch (err) { $('#signin-error').textContent = err.message; }
 });
@@ -437,14 +437,27 @@ async function afterSignIn() {
   } catch { /* the clock does not need it */ }
 }
 
+// Sign in first, over the plain page; the intro plays once you are in.
+let started = false;
+function begin() {
+  started = true;
+  $('#startup').style.removeProperty('display');
+  document.documentElement.classList.add('is-starting');
+  playStartup(app);
+}
 (async () => {
   try {
     const res = await fetch('/api/session', { credentials: 'same-origin' });
     if (!res.ok) throw new Error('no server');
     const s = await res.json();
     for (const li of document.querySelectorAll('.jv-systems li')) li.classList.toggle('is-off', /Voice/.test(li.textContent) ? !s.voice : !s.brain);
-    if (!s.signedIn) showSignIn(); else afterSignIn();
+    if (!s.signedIn) {
+      $('#startup').style.display = 'none';
+      document.documentElement.classList.remove('is-starting');
+      showSignIn();
+    } else { begin(); afterSignIn(); }
   } catch {
+    if (!started) begin();
     $('#voice-sub').textContent = 'The Jarvis server is not connected to this site yet.';
   }
 })();
