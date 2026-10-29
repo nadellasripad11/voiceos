@@ -1,0 +1,32 @@
+# Builds the phone app as an unsigned iPhone app (Jarvis.ipa) on GitHub's Macs.
+# Sign and install it from Windows with Sideloadly and a free Apple ID.
+# Run it from the repo's Actions tab, or: gh workflow run iphone-app.yml
+name: iPhone app
+
+on: workflow_dispatch
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx expo prebuild --platform ios --no-install
+      - run: cd ios && pod install
+      - name: Build (unsigned)
+        run: >
+          xcodebuild -workspace ios/Jarvis.xcworkspace -scheme Jarvis
+          -configuration Release -sdk iphoneos -derivedDataPath build
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" | tail -40
+          ; test -d build/Build/Products/Release-iphoneos/Jarvis.app
+      - run: mkdir Payload && cp -R build/Build/Products/Release-iphoneos/Jarvis.app Payload/ && zip -qry Jarvis.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-ipa
+          path: mobile/Jarvis.ipa
