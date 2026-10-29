@@ -223,12 +223,40 @@ async function learnFrom(question, answer) {
 }
 
 // --- speaking typed answers -------------------------------------------------------
-/** A British male voice from the browser, if it has one. Free, and on the device. */
-function speak(text) {
-  if (!('speechSynthesis' in window)) return;
+// The desktop app's voice: Piper's en_GB-alan-medium at 1.3x, run in the page.
+// The model (~60MB) downloads once and is kept by the browser; until it is
+// ready, or if it fails, the browser's own voice speaks instead.
+const PIPER = 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/+esm';
+const ALAN = 'en_GB-alan-medium';
+let piper = null, playing = null, speakId = 0;
+const loadPiper = () => (piper ||= import(PIPER).catch((e) => { piper = null; throw e; }));
+
+async function speak(text) {
   const plain = String(text || '').replace(/[*_#`>]/g, '').replace(/\[(.*?)\]\(.*?\)/g, '$1').replace(/\s+/g, ' ').trim();
   if (!plain) return;
-  speechSynthesis.cancel();
+  const id = ++speakId;
+  if (playing) { playing.pause(); playing = null; }
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  try {
+    const tts = await loadPiper();
+    const wav = await tts.predict({ text: plain.slice(0, 2400), voiceId: ALAN });
+    if (id !== speakId) return;
+    const audio = new Audio(URL.createObjectURL(wav));
+    audio.playbackRate = 1.3;
+    playing = audio;
+    let pulse = null;
+    audio.onplay = () => { setState('speaking'); pulse = setInterval(() => { speechLevel = 0.25 + Math.random() * 0.35; }, 120); };
+    audio.onended = audio.onerror = () => { clearInterval(pulse); speechLevel = 0; URL.revokeObjectURL(audio.src); if (state === 'speaking') setState('idle'); };
+    await audio.play();
+    return;
+  } catch (err) { console.warn('Piper voice unavailable, using the browser voice:', err); }
+  if (id !== speakId) return;
+  browserSpeak(plain);
+}
+
+/** A British male voice from the browser, if it has one. */
+function browserSpeak(plain) {
+  if (!('speechSynthesis' in window)) return;
   const u = new SpeechSynthesisUtterance(plain.slice(0, 900));
   const voices = speechSynthesis.getVoices();
   u.voice = voices.find((v) => /en-GB/i.test(v.lang) && /male|ryan|george|daniel|thomas|arthur/i.test(v.name))
