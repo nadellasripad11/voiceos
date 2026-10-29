@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Jarvis",
+    "slug": "jarvis",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": { "NSMicrophoneUsageDescription": "Jarvis listens while you are on a call with him." }
+    },
+    "android": { "permissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS", "POST_NOTIFICATIONS"] },
+    "plugins": ["expo-notifications", "expo-audio"]
+  }
+}
