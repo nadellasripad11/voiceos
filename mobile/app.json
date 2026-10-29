@@ -7,7 +7,6 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.sripin.jarvis",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Jarvis listens while you are on a call with him."
       }
