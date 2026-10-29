@@ -479,7 +479,7 @@ for (const b of document.querySelectorAll('.jv-action')) {
 }
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') showView('home');
-  if (e.key.length === 1 && document.activeElement !== $('#message-input') && !e.ctrlKey && !e.metaKey && !e.altKey) $('#message-input').focus();
+  if (e.key.length === 1 && $('#signin').hidden && !e.target.closest?.('input, textarea') && document.activeElement !== $('#message-input') && !e.ctrlKey && !e.metaKey && !e.altKey) $('#message-input').focus();
 });
 
 setState('idle');
