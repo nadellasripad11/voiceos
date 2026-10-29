@@ -96,6 +96,27 @@ class WebLink {
     this.frame({ done: true });
   }
 
+  /** A file to the website and phone. @returns {{id, url}} with a full address */
+  async sendFile({ name, type, data }) {
+    const r = await this.call('/api/link/file', { name, type, data });
+    if (r.error) throw new Error(r.error);
+    return { id: r.id, url: this.url + r.url };
+  }
+
+  /** A file uploaded on the website, as a Buffer. */
+  async fetchFile(id) {
+    const res = await fetch(`${this.url}/api/link/files/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${this.token}` } });
+    if (!res.ok) throw new Error(res.status === 404 ? 'That upload is gone.' : `download failed (${res.status})`);
+    const name = (/filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '') || [])[1] || `upload-${id}`;
+    return { name, data: Buffer.from(await res.arrayBuffer()) };
+  }
+
+  /** One exchange said on the laptop, into the shared history. */
+  logConvo(question, answer) {
+    if (!question || !answer) return;
+    this.call('/api/link/convo', { question, answer }).catch(() => {});
+  }
+
   /** Asks the website, while a website job runs. Resolves true/false, or null if no job. */
   async confirm({ title, detail }) {
     if (!this.job) return null;

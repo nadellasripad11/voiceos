@@ -125,3 +125,11 @@ html[data-state="listening"] .jv-voice-btn i { background: var(--jv-blue); }
 .jv-approve div { display: flex; gap: 8px; justify-content: flex-end; }
 .jv-approve button { height: 34px; padding: 0 16px; border-radius: 10px; border: 1px solid rgba(40,56,82,.2); background: rgba(255,255,255,.8); cursor: pointer; font: 500 13px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; }
 .jv-approve button.yes { background: #0f264e; color: #fff; border-color: #0f264e; }
+
+/* ---- attach and wake word ---- */
+.attach-button, .wake-button { font: 500 16px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-ink); }
+.wake-button[aria-pressed="true"] { background: #0f264e; color: #fff; }
+
+/* ---- a call from the phone app: the orb and nothing else ---- */
+html.is-call .jv-left, html.is-call .jv-right, html.is-call .composer, html.is-call .voice-card { display: none !important; }
+html.is-call body::after { content: "Tap anywhere to talk to Jarvis"; position: fixed; left: 0; right: 0; bottom: 48px; text-align: center; font: 400 14px/1 "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--jv-muted); }

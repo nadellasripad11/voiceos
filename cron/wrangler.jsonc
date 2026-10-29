@@ -1,0 +1,8 @@
+{
+  "name": "jarvis-clock",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "jarvis", "database_id": "2ba39620-5ddc-4583-af18-9a95ae6e0ed7" }]
+}

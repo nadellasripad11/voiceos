@@ -12,6 +12,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { fakeD1 } = require('./fake-d1');
 
 const ROOT = path.join(__dirname, '..', 'web');
 const PORT = Number(process.argv[2] || 4325);
@@ -31,7 +32,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
       return new Response(fs.readFileSync(file), { headers: { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' } });
     }
   };
-  const env = { GROQ_API_KEY: creds.groq || '', GEMINI_API_KEY: creds.gemini || '', JARVIS_PASSWORD: process.env.JARVIS_PASSWORD || 'jarvis-dev', ASSETS: assets };
+  const env = { GROQ_API_KEY: creds.groq || '', GEMINI_API_KEY: creds.gemini || '', JARVIS_PASSWORD: process.env.JARVIS_PASSWORD || 'jarvis-dev', ASSETS: assets, DB: fakeD1(path.join(require('os').tmpdir(), 'jarvis-web-dev.db')) };
 
   http.createServer(async (req, res) => {
     const chunks = [];

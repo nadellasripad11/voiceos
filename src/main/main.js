@@ -253,6 +253,8 @@ async function initServices() {
   });
   services.agent.onBrowserFrame = forwardBrowserFrame;
   services.agent.look = lookAndAnswer;
+  services.agent.see = seeScreen;
+  if (services.webLink) services.agent.webLink = services.webLink;
 
   services.edit = new EditMode({
     provider: services.provider,
@@ -338,6 +340,8 @@ function reloadServices() {
   });
   services.agent.onBrowserFrame = forwardBrowserFrame;
   services.agent.look = lookAndAnswer;
+  services.agent.see = seeScreen;
+  if (services.webLink) services.agent.webLink = services.webLink;
   services.edit = new EditMode({
     provider: services.provider,
     config,
@@ -1928,6 +1932,15 @@ async function lookAndAnswer(question) {
   return { ok: true, summary: answer, spoken: answer };
 }
 
+/** One screenshot read by Gemini, for use_computer. */
+async function seeScreen({ image, prompt }) {
+  const key = readCredentials().gemini;
+  if (!key) throw new Error('needs a Gemini key');
+  const eyes = createProvider('gemini', { apiKey: key, logger });
+  const res = await eyes.chat({ model: 'gemini-2.5-flash', temperature: 0, maxTokens: 200, messages: [{ role: 'user', content: prompt, images: [image] }] });
+  return res.text || '';
+}
+
 // --- Memory ----------------------------------------------------------------
 
 let memoryBrain = null;
@@ -1961,6 +1974,7 @@ function startWebLink() {
       return result;
     }
   }).start();
+  services.agent.webLink = services.webLink;
   logger.info(`[web-link] taking jobs from ${link.url}`);
 }
 
@@ -2213,6 +2227,7 @@ async function runAgent(question, { signal, source = 'voice' } = {}) {
 
     broadcast('agent-result', result);
     learnFrom(question, result.answer);
+    if (services.webLink) services.webLink.logConvo(question, result.answer);
 
     // Logged so a question that produced nothing is distinguishable from one
     // that was never processed. Before this, the only trace of a failed request

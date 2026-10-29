@@ -29,6 +29,7 @@ const { looksLikeExfiltration } = require('./untrusted');
 const { sendMessage } = require('./messaging');
 const { canvasTools } = require('./tools-canvas');
 const { googleTools } = require('./tools-google');
+const { pcTools } = require('./tools-pc');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1116,6 +1117,7 @@ function openingFor(toolName) {
 function buildTools(ctx) {
   const all = [
     ...systemTools(ctx),
+    ...(ctx.bridge ? pcTools(ctx) : []),
     ...smallTalkTools(ctx),
     ...weatherTools(ctx),
     ...messagingTools(ctx),

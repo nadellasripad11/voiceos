@@ -8,7 +8,7 @@
  */
 const path = require('path');
 const crypto = require('crypto');
-const { DatabaseSync } = require('node:sqlite');
+const { fakeD1 } = require('./fake-d1');
 const { pathToFileURL } = require('url');
 const { WebLink } = require('../src/main/web-link');
 
@@ -18,22 +18,6 @@ const check = (n, c, d) => {
   else { console.log(`  FAIL  ${n}${d ? `\n        ${d}` : ''}`); fail++; }
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Just enough of D1 for the worker. */
-function fakeD1() {
-  const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE memory (fact TEXT PRIMARY KEY, at INTEGER NOT NULL);
-    CREATE TABLE jobs (id TEXT PRIMARY KEY, task TEXT NOT NULL, status TEXT NOT NULL, title TEXT, detail TEXT, answer TEXT, result TEXT, at INTEGER NOT NULL);
-    CREATE TABLE frame (k INTEGER PRIMARY KEY, data TEXT, url TEXT, at INTEGER);
-    CREATE TABLE link (k INTEGER PRIMARY KEY, hash TEXT, seen INTEGER);`);
-  const stmt = (sql, args = []) => ({
-    bind: (...a) => stmt(sql, a),
-    first: async () => db.prepare(sql).get(...args) || null,
-    run: async () => db.prepare(sql).run(...args),
-    all: async () => ({ results: db.prepare(sql).all(...args) })
-  });
-  return { raw: db, prepare: (sql) => stmt(sql), batch: async (list) => Promise.all(list.map((s) => s.run())) };
-}
 
 (async () => {
   const worker = (await import(pathToFileURL(path.join(__dirname, '..', 'web', '_worker.js')).href)).default;
@@ -100,6 +84,49 @@ function fakeD1() {
   check('forgetting on the website forgets on the laptop', !texts.includes('The user drinks oat milk'), texts.join(' | '));
   const secret = await (await call('/api/memory', { method: 'POST', cookie, body: { add: ['My PIN is 4821'] } })).json();
   check('secrets are never stored', !secret.facts.some((f) => /PIN/.test(f)));
+
+  console.log('\nFiles:');
+  {
+    const sent = await link.sendFile({ name: 'notes.txt', type: 'text/plain', data: Buffer.from('hello from the laptop').toString('base64') });
+    const got = await call(sent.url.replace(site, ''), { cookie });
+    check('a file from the laptop downloads on the website', got.status === 200 && (await got.text()) === 'hello from the laptop');
+    const big = 'x'.repeat(3500000);
+    const up = await (await call('/api/files', { method: 'POST', cookie, body: { name: 'big.txt', data: Buffer.from(big).toString('base64') } })).json();
+    const back = await link.fetchFile(up.id);
+    check('a big upload (in pieces) arrives whole on the laptop', back.data.toString() === big && back.name === 'big.txt');
+    check('files need signing in', (await call(sent.url.replace(site, ''))).status === 401);
+  }
+
+  console.log('\nRoutines and the inbox:');
+  {
+    const ctxBody = { tz: 'America/New_York' };
+    const r = await (await call('/api/tool', { method: 'POST', cookie, body: { name: 'schedule', args: { what: 'Take the bins out', in_minutes: 0.1 }, ...ctxBody } })).json();
+    check('a reminder is scheduled', /Scheduled/.test(r.text), r.text);
+    const daily = await (await call('/api/tool', { method: 'POST', cookie, body: { name: 'schedule', args: { what: 'Stretch', time: '07:30', repeat: 'weekdays' }, ...ctxBody } })).json();
+    const row = DB.raw.prepare("SELECT next_at FROM routines WHERE what = 'Stretch'").get();
+    const local = new Date(row.next_at).toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    check('a weekday routine lands at 7:30 on a weekday, New York time', /7:30 AM/.test(local) && !/Sat|Sun/.test(local), `${daily.text} -> ${local}`);
+    const key = 'clock-key';
+    DB.raw.prepare('INSERT INTO cron_key (k, hash, key) VALUES (1, ?, ?)').run(crypto.createHash('sha256').update(key).digest('hex'), key);
+    const tickCall = (k) => worker.fetch(new Request(`${site}/api/cron/tick`, { method: 'POST', headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json' }, body: '{}' }), env);
+    check('the clock needs its key', (await tickCall('wrong')).status === 401);
+    await sleep(6500);
+    const ran = await (await tickCall(key)).json();
+    check('the clock runs what is due', ran.ran === 1, JSON.stringify(ran));
+    const box = await (await call('/api/inbox?since=1', { cookie })).json();
+    check('the reminder is in the inbox for the phone', box.items.some((i) => i.title === 'Reminder' && /bins/.test(i.body)), JSON.stringify(box.items.map((i) => i.title)));
+    check('a one-off reminder is gone after it fires; the routine stays', !DB.raw.prepare("SELECT 1 FROM routines WHERE what LIKE '%bins%'").get() && DB.raw.prepare("SELECT 1 FROM routines WHERE what = 'Stretch'").get());
+    const cancel = await (await call('/api/tool', { method: 'POST', cookie, body: { name: 'cancel_schedule', args: { about: 'stretch' } } })).json();
+    check('a routine can be cancelled', /Cancelled/.test(cancel.text));
+  }
+
+  console.log('\nHistory:');
+  {
+    link.logConvo('what is on my screen', 'A spreadsheet.');
+    await sleep(300);
+    const h = await (await call('/api/convo', { cookie })).json();
+    check('the laptop\'s conversations show on the website', h.items.some((i) => i.source === 'laptop' && /screen/.test(i.question)));
+  }
 
   link.stop();
   global.fetch = realFetch;

@@ -321,6 +321,106 @@ async function ask(question) {
   renderLog(); renderTasks(); renderFound();
 }
 
+// --- history, the inbox, files, the wake word -----------------------------------------
+const CALL = new URLSearchParams(location.search).has('call');
+if (CALL) document.documentElement.classList.add('is-call');
+window.jarvisCall = () => { if (!voice) startVoice(); };
+window.jarvisHangUp = () => { if (voice) stopVoice(); };
+
+/** The last conversations, from every device. */
+async function loadHistory() {
+  try {
+    const { items } = await (await fetch('/api/convo', { credentials: 'same-origin' })).json();
+    if (log.length) return;
+    for (const it of items) log.push({ question: it.question, answer: it.answer, source: it.source });
+    renderLog();
+  } catch { /* the page works without it */ }
+}
+
+/** Reminders, routine answers and finished laptop jobs, while the page is open. */
+let inboxSince = Date.now();
+function watchInbox() {
+  const check = async () => {
+    try {
+      const { items } = await (await fetch(`/api/inbox?since=${inboxSince}`, { credentials: 'same-origin' })).json();
+      for (const it of items.reverse()) {
+        inboxSince = Math.max(inboxSince, it.at);
+        if (it.title === 'Done on your laptop' && watching.size) continue; // already on screen
+        showToast(`${it.title}: ${it.body}`);
+        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(it.title, { body: it.body });
+        if (it.title === 'Reminder') speak(`Reminder, sir: ${it.body}`);
+      }
+    } catch { /* try again next time */ }
+  };
+  setInterval(check, 30000);
+  if ('Notification' in window && Notification.permission === 'default') document.addEventListener('click', () => Notification.requestPermission(), { once: true });
+}
+function showToast(text) {
+  const t = $('#toast');
+  t.textContent = text;
+  t.classList.add('visible');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => t.classList.remove('visible'), 8000);
+}
+
+/** A file: read by Jarvis, or (if the message says so) saved onto the laptop. */
+const asBase64 = (file) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = reject; r.readAsDataURL(file); });
+$('#attach-button').addEventListener('click', () => $('#attach-input').click());
+$('#attach-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const input = $('#message-input');
+  const words = input.value.trim();
+  input.value = '';
+  if (file.size > 19 * 1024 * 1024) { showToast('That file is over 19MB, too big.'); return; }
+  const data = await asBase64(file);
+  if (/\b(save|laptop|computer|download|put|send it)\b/i.test(words)) {
+    rich($('#current-response'), `Uploading ${file.name}…`);
+    const up = await post('/api/files', { name: file.name, type: file.type, data });
+    if (up.error) { rich($('#current-response'), up.error); return; }
+    ask(`${words || 'Save this to my laptop'} — the uploaded file "${up.name}" has file id ${up.id}; use save_from_website on the laptop.`);
+    return;
+  }
+  const q = words || 'Summarise this.';
+  const entry = { question: `${q} [${file.name}]`, answer: '' };
+  log.unshift(entry);
+  $('#current-request').textContent = entry.question;
+  rich($('#current-response'), 'Reading…');
+  setState('thinking');
+  try {
+    entry.answer = (await post('/api/read', { name: file.name, type: file.type, data, question: q })).answer;
+  } catch (err) { entry.answer = err.message; }
+  rich($('#current-response'), entry.answer);
+  setState('idle');
+  speak(entry.answer.length < 600 ? entry.answer : entry.answer.slice(0, 600));
+  renderLog();
+});
+
+/*
+ * "Hey Jarvis", while this tab is open and the button is on. Uses the
+ * browser's speech recognition (Chrome sends that audio to Google); it is
+ * off until pressed and stops when the tab closes.
+ */
+let wake = null;
+$('#wake-button').addEventListener('click', () => {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) { showToast('This browser cannot listen for a wake word. Chrome or Edge can.'); return; }
+  if (wake) { wake.stopped = true; wake.stop(); wake = null; $('#wake-button').setAttribute('aria-pressed', 'false'); showToast('Stopped listening for "Hey Jarvis".'); return; }
+  const rec = new Rec();
+  rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+  rec.onresult = (e) => {
+    const said = [...e.results].slice(e.resultIndex).map((r) => r[0].transcript).join(' ');
+    if (/\b(hey|hi|okay|ok)?\s*jarvis\b/i.test(said) && !voice) { rec.stop(); startVoice(); }
+  };
+  // It stops on its own every so often, and while the voice session has the mic.
+  rec.onend = () => { if (!rec.stopped) setTimeout(() => { if (!rec.stopped && !voice) try { rec.start(); } catch { /* already on */ } else if (!rec.stopped) rec.onend(); }, 1500); };
+  rec.start();
+  wake = rec;
+  $('#wake-button').setAttribute('aria-pressed', 'true');
+  showToast('Listening for "Hey Jarvis" while this tab is open.');
+});
+
 // --- the camera -------------------------------------------------------------------
 /** One frame from the webcam, then the camera goes off again. */
 async function captureFrame() {
@@ -445,7 +545,7 @@ async function startVoice() {
           const q = v.heard.trim(), a = v.said.trim();
           log.unshift({ question: q || '(voice)', answer: a }); asked++;
           renderLog(); renderTasks();
-          if (q && a) learnFrom(q, a);
+          if (q && a) { learnFrom(q, a); post('/api/convo', { question: q, answer: a }).catch(() => {}); }
           v.heard = ''; v.said = '';
         }
       }
@@ -553,6 +653,9 @@ $('#signin-form').addEventListener('submit', async (e) => {
 
 async function afterSignIn() {
   syncMemory();
+  loadHistory();
+  watchInbox();
+  if (CALL) document.body.addEventListener('click', () => { if (!voice) startVoice(); }, { once: true });
   // The weather under the clock: one quick tool call, no model involved.
   try {
     const r = await post('/api/tool', { name: 'weather', args: {}, tz: TZ });
@@ -567,6 +670,8 @@ function begin() {
   started = true;
   $('#startup').style.removeProperty('display');
   document.documentElement.classList.add('is-starting');
+  // A call from the phone app goes straight to the voice.
+  if (CALL) { document.querySelector('#startup').remove(); document.documentElement.classList.remove('is-starting'); return; }
   playStartup(app);
 }
 (async () => {

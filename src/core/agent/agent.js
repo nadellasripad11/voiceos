@@ -90,6 +90,7 @@ ${facts}`;
     // connections must be here: buildTools skips every provider-backed tool
     // when it is missing, which silently drops Gmail, Calendar, Drive and
     // Classroom and sends those questions to web search instead.
+    const self = this;
     return {
       bridge: this.bridge,
       browser: this.browser,
@@ -105,6 +106,10 @@ ${facts}`;
       look: (question) => (this.look ? this.look(question) : Promise.resolve({ ok: false, summary: 'The camera is not available here.' })),
       // The browser agent's tab, frame by frame, for the console's live view.
       browserFrame: (frame) => { if (this.onBrowserFrame) this.onBrowserFrame(frame); },
+      // Reads a screenshot for use_computer; set by the app, absent in tests.
+      see: this.see ? (req) => this.see(req) : null,
+      // The website link, for sending files and the screen; set by the app.
+      get webLink() { return self.webLink || null; },
       mcp: this.mcp,
       ambient: this.ambient,
       logger: this.logger

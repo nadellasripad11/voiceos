@@ -91,8 +91,11 @@
 
       <form class="composer glass" id="composer" aria-label="Message Jarvis">
         
+        <button class="round-button attach-button" id="attach-button" type="button" aria-label="Attach a file: Jarvis reads it, or saves it to your laptop" title="Attach a file">+</button>
+        <input id="attach-input" type="file" hidden />
         <input id="message-input" type="text" placeholder="Type a message or ask me anything..." aria-label="Your message" autocomplete="off" maxlength="8000" />
         <button class="round-button mic-button" id="mic-button" type="button" aria-label="Record a voice message" aria-pressed="false"><svg class="icon"><use href="#i-mic"/></svg></button>
+        <button class="round-button wake-button" id="wake-button" type="button" aria-label="Listen for Hey Jarvis" aria-pressed="false" title="Listen for &quot;Hey Jarvis&quot; while this tab is open">J</button>
         <button class="round-button send-button" type="submit" aria-label="Send message"><svg class="icon"><use href="#i-send"/></svg></button>
         
         
@@ -155,6 +158,6 @@
           <p class="jv-signin-error" id="signin-error" role="alert"></p>
         </form>
       </div>
-    <script type="module" src="/jarvis.js?v=6"></script>
+    <script type="module" src="/jarvis.js?v=7"></script>
   </body>
 </html>
