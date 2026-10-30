@@ -352,9 +352,27 @@ async function ask(request, env) {
   const question = String(body.question || '').trim().slice(0, 4000);
   if (!question) return json({ error: 'Ask something.' }, 400);
   const ctx = context(request, body, env);
+  await keepPlace(env, request.cf);
   const out = await think(ctx, question, body.history);
   if (out.answer && !out.look) await logConvo(env, question, out.answer, 'website');
   return json(out);
+}
+
+/**
+ * Where the user was last seen on the website, for texts: a text carries no
+ * location, so "what's the weather" by text used to ask which city.
+ */
+async function keepPlace(env, cf) {
+  if (!env.DB || !cf || cf.latitude == null) return;
+  try {
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS place (k INTEGER PRIMARY KEY, city TEXT, region TEXT, country TEXT, latitude TEXT, longitude TEXT, timezone TEXT, at INTEGER)').run();
+    await env.DB.prepare('INSERT OR REPLACE INTO place (k, city, region, country, latitude, longitude, timezone, at) VALUES (1, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(cf.city || '', cf.region || '', cf.country || '', String(cf.latitude), String(cf.longitude), cf.timezone || '', Date.now()).run();
+  } catch { /* only a convenience */ }
+}
+
+async function lastPlace(env) {
+  try { return (await env.DB.prepare('SELECT * FROM place WHERE k = 1').first()) || {}; } catch { return {}; }
 }
 
 /** One question, answered with tools. Used by the page and by routines. */
@@ -487,6 +505,9 @@ async function linkApi(request, env, url) {
   if (!token || !row || !same(await sha256(token), row.hash)) return json({ error: 'Not linked.' }, 401);
   const now = Date.now();
   if (now - row.seen > 15000) await env.DB.prepare('UPDATE link SET seen = ? WHERE k = 1').bind(now).run();
+  // Where the laptop is: at once if nothing is known yet, then hourly. It is
+  // the place a text's weather is for.
+  if (now - row.seen > 15000 && (new Date(now).getMinutes() === 0 || !(await lastPlace(env)).latitude)) await keepPlace(env, request.cf);
   const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
   const path = url.pathname;
 
@@ -774,7 +795,8 @@ async function answerText(env, from, q) {
 
   const past = (await recentConvo(env)).slice(0, 6).reverse().map((c) => ({ question: c.question, answer: c.answer }));
   const facts = (await memoryFacts(env)).slice(-60);
-  const ctx = context({ cf: {} }, { tz: env.OWNER_TZ || 'America/New_York', memory: facts }, env);
+  const place = await lastPlace(env);
+  const ctx = context({ cf: place.latitude ? place : {} }, { tz: env.OWNER_TZ || place.timezone || 'America/New_York', memory: facts }, env);
   ctx.text += '\nThis conversation is by text message. Reply in plain text: no markdown, no headings, short.';
   const out = await think(ctx, q, past);
 
