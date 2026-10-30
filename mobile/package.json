@@ -13,9 +13,9 @@
     "expo-audio": "*",
     "expo-constants": "*",
     "expo-notifications": "*",
-    "expo-speech": "*",
     "react": "19.3.0",
     "react-native": "*",
+    "react-native-safe-area-context": "~5.10.1",
     "react-native-webview": "*"
   },
   "devDependencies": {

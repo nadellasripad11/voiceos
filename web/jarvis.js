@@ -347,7 +347,9 @@ function watchInbox() {
         inboxSince = Math.max(inboxSince, it.at);
         if (it.title === 'Done on your laptop' && watching.size) continue; // already on screen
         showToast(`${it.title}: ${it.body}`);
-        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(it.title, { body: it.body });
+        // Inside the phone app, the app turns it into a phone notification.
+        if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'notify', title: it.title, body: it.body }));
+        else if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification(it.title, { body: it.body });
         if (it.title === 'Reminder') speak(`Reminder, sir: ${it.body}`);
       }
     } catch { /* try again next time */ }
