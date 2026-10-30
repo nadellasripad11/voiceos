@@ -20,11 +20,11 @@ const COOKIE = 'jv';
 const SESSION_DAYS = 30;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
     try {
-      return await api(request, env, url);
+      return await api(request, env, url, ctx);
     } catch (err) {
       return json({ error: 'Something went wrong on the server.', detail: String(err && err.message || err).slice(0, 200) }, 500);
     }
@@ -33,8 +33,11 @@ export default {
 
 // --- routing ------------------------------------------------------------------
 
-async function api(request, env, url) {
+async function api(request, env, url, ctx) {
   if (!env.JARVIS_PASSWORD) return json({ error: 'This Jarvis has no password set. Add JARVIS_PASSWORD in Cloudflare → Settings → Variables and Secrets.' }, 503);
+
+  // Texts to Jarvis, from Sendblue: its own secret address, not the cookie.
+  if (url.pathname.startsWith('/api/sendblue/') && request.method === 'POST') return textIn(request, env, url, ctx);
 
   if (request.method === 'POST') {
     // Only this site's own pages may post here; with a SameSite cookie this
@@ -499,9 +502,11 @@ async function linkApi(request, env, url) {
   // Something the laptop was watching for happened.
   if (path === '/api/link/notify') { await notify(env, String(body.title || 'Jarvis').slice(0, 80), String(body.body || '').slice(0, 500)); return json({ ok: true }); }
   if (path === '/api/link/confirm') {
-    await notify(env, 'Jarvis needs your approval', String(body.title || 'Approve this?'));
+    await notify(env, 'Jarvis needs your approval', String(body.title || 'Approve this?'), { text: false });
     await env.DB.prepare("UPDATE jobs SET status = 'confirm', title = ?, detail = ?, answer = NULL WHERE id = ?")
       .bind(String(body.title || 'Approve this?').slice(0, 300), String(body.detail || '').slice(0, 2000), String(body.id)).run();
+    // Asked by text: the approval is asked by text, and answered with yes or no.
+    if (await isTextJob(env, String(body.id))) await askByText(env, String(body.title || 'Approve this?'), String(body.detail || ''));
     return json({ ok: true });
   }
   if (path === '/api/link/answer') {
@@ -511,7 +516,8 @@ async function linkApi(request, env, url) {
   if (path === '/api/link/done') {
     const result = JSON.stringify({ answer: String(body.answer || 'Done.').slice(0, 6000), found: Array.isArray(body.found) ? body.found.slice(0, 12) : [] });
     await env.DB.prepare("UPDATE jobs SET status = 'done', result = ? WHERE id = ?").bind(result, String(body.id)).run();
-    await notify(env, 'Done on your laptop', String(body.answer || 'Done.'));
+    // Asked by text: the answer goes back by text. Asked on the site: the site shows it.
+    await notify(env, 'Done on your laptop', String(body.answer || 'Done.'), { text: await isTextJob(env, String(body.id)) });
     await logConvo(env, (await env.DB.prepare('SELECT task FROM jobs WHERE id = ?').bind(String(body.id)).first() || {}).task, String(body.answer || ''), 'laptop');
     await env.DB.prepare('DELETE FROM jobs WHERE at < ?').bind(now - 86400000).run();
     return json({ ok: true });
@@ -686,12 +692,115 @@ async function recentConvo(env) {
   return results;
 }
 
+// --- texting: Jarvis by iMessage/SMS, through Sendblue --------------------------------
+/*
+ * Sendblue gives Jarvis a phone line. A text to it arrives here (the webhook is
+ * set in Sendblue's dashboard to /api/sendblue/<SENDBLUE_HOOK>), is answered
+ * with the same brain and tools as the website, and the reply is texted back.
+ * Reminders, routines, laptop results and watch alerts are texted too.
+ *
+ * Only OWNER_PHONE is answered: anyone can text a phone number, and Jarvis
+ * holds tools that reach the laptop. Everyone else gets silence.
+ *
+ * Secrets: SENDBLUE_KEY_ID, SENDBLUE_SECRET, SENDBLUE_FROM (Jarvis's line),
+ * OWNER_PHONE, SENDBLUE_HOOK (a random string), and OWNER_TZ if not New York.
+ */
+const SENDBLUE = 'https://api.sendblue.com/api/send-message';
+const YES = /^(?:yes|yeah|yep|yup|y|ok|okay|sure|approve|approved|go ahead|do it)\b/i;
+const NO = /^(?:no|nope|nah|n|cancel|stop|don'?t|deny|decline)\b/i;
+
+/** +1 for a bare 10-digit US number; otherwise the digits as given. */
+function phone(n) {
+  const raw = String(n || '').trim();
+  if (raw.includes('@')) return raw.toLowerCase();
+  const d = raw.replace(/\D/g, '');
+  return d.length === 10 ? `+1${d}` : d ? `+${d}` : '';
+}
+
+const texting = (env) => Boolean(env.SENDBLUE_KEY_ID && env.SENDBLUE_SECRET && env.OWNER_PHONE);
+
+/** One text. Plain words: no markdown, links kept as addresses. */
+async function sendText(env, to, content) {
+  if (!texting(env)) return false;
+  const body = String(content || '').replace(/\[(.*?)\]\((https?:[^)]+)\)/g, '$1 ($2)').replace(/[*_#`>]/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 1500);
+  if (!body) return false;
+  const res = await fetch(SENDBLUE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'sb-api-key-id': env.SENDBLUE_KEY_ID, 'sb-api-secret-key': env.SENDBLUE_SECRET },
+    body: JSON.stringify({ number: to, content: body, ...(env.SENDBLUE_FROM ? { from_number: phone(env.SENDBLUE_FROM) } : {}) })
+  });
+  if (!res.ok) console.log('sendblue', res.status, (await res.text()).slice(0, 300));
+  return res.ok;
+}
+
+const textOwner = (env, content) => sendText(env, phone(env.OWNER_PHONE), content);
+
+async function textTable(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS text_jobs (id TEXT PRIMARY KEY, at INTEGER)').run();
+}
+async function isTextJob(env, id) {
+  if (!env.DB || !texting(env)) return false;
+  await textTable(env);
+  return Boolean(await env.DB.prepare('SELECT id FROM text_jobs WHERE id = ?').bind(id).first());
+}
+const askByText = (env, title, detail) => textOwner(env, `${title}${detail ? `\n${detail.slice(0, 400)}` : ''}\n\nReply YES to go ahead or NO to cancel.`);
+
+/** Sendblue's webhook: answered at once, worked on after, so it is not sent twice. */
+async function textIn(request, env, url, ctx) {
+  const hook = url.pathname.slice('/api/sendblue/'.length);
+  if (!env.SENDBLUE_HOOK || !same(hook, env.SENDBLUE_HOOK)) return json({ error: 'Not found.' }, 404);
+  const m = await request.json().catch(() => ({}));
+  if (m.is_outbound || m.status === 'SENT' || m.status === 'DELIVERED') return json({ ok: true });
+  const from = phone(m.number || m.from_number);
+  if (!texting(env) || from !== phone(env.OWNER_PHONE) || m.group_id) return json({ ok: true });
+  const work = answerText(env, from, String(m.content || '').trim().slice(0, 2000)).catch((err) => sendText(env, from, `Something went wrong on my side, sir: ${err.message}`));
+  if (ctx && ctx.waitUntil) ctx.waitUntil(work); else await work;
+  return json({ ok: true });
+}
+
+async function answerText(env, from, q) {
+  if (!q) return sendText(env, from, 'I can only read text messages for now, sir.');
+  await textTable(env);
+
+  // A yes or no to an approval that was asked by text.
+  if (YES.test(q) || NO.test(q)) {
+    const row = await env.DB.prepare("SELECT j.id FROM jobs j JOIN text_jobs t ON t.id = j.id WHERE j.status = 'confirm' ORDER BY j.at DESC LIMIT 1").first();
+    if (row) {
+      const yes = YES.test(q);
+      await env.DB.prepare("UPDATE jobs SET answer = ?, status = 'running' WHERE id = ? AND status = 'confirm'").bind(yes ? 'yes' : 'no', row.id).run();
+      return sendText(env, from, yes ? 'Going ahead, sir.' : 'Cancelled. Nothing was done.');
+    }
+  }
+
+  const past = (await recentConvo(env)).slice(0, 6).reverse().map((c) => ({ question: c.question, answer: c.answer }));
+  const facts = (await memoryFacts(env)).slice(-60);
+  const ctx = context({ cf: {} }, { tz: env.OWNER_TZ || 'America/New_York', memory: facts }, env);
+  ctx.text += '\nThis conversation is by text message. Reply in plain text: no markdown, no headings, short.';
+  const out = await think(ctx, q, past);
+
+  let reply = out.look ? "I can't see through the camera by text, sir. Ask me on the website or in the app." : String(out.answer || 'Done.');
+  const remembered = cleanFacts(out.memoryAdd, 20);
+  if (remembered.length) await env.DB.batch(remembered.map((f) => env.DB.prepare('INSERT OR IGNORE INTO memory (fact, at) VALUES (?, ?)').bind(f, Date.now())));
+  if (out.pendingJob) {
+    await env.DB.prepare('INSERT OR REPLACE INTO text_jobs (id, at) VALUES (?, ?)').bind(out.pendingJob, Date.now()).run();
+    // It may already be waiting for approval, asked before it was known to be a text job.
+    const job = await env.DB.prepare('SELECT status, title, detail FROM jobs WHERE id = ?').bind(out.pendingJob).first();
+    if (job && job.status === 'confirm') await askByText(env, job.title || 'Approve this?', job.detail || '');
+    else reply += " I'll text you when it's done.";
+  }
+  const links = (out.found || []).filter((f) => f.url).slice(0, 2).map((f) => f.url);
+  await logConvo(env, q, reply, 'text');
+  return sendText(env, from, links.length ? `${reply}\n\n${links.join('\n')}` : reply);
+}
+
 // --- the inbox: what the phone and the site are told -----------------------------------
 
-async function notify(env, title, body) {
+async function notify(env, title, body, { text: byText = true } = {}) {
   if (!env.DB) return;
   const text = String(body).replace(/[*_#`>]/g, '').replace(/\[(.*?)\]\(.*?\)/g, '$1').replace(/\s+/g, ' ').trim().slice(0, 600);
   await env.DB.prepare('INSERT INTO inbox (title, body, at) VALUES (?, ?, ?)').bind(String(title).slice(0, 120), text, Date.now()).run();
+  // Reminders, routines and alerts reach the phone as a text too, once texting is set up.
+  if (byText) await textOwner(env, `${title}: ${text}`).catch(() => {});
   const { results } = await env.DB.prepare('SELECT token FROM push_tokens').all();
   if (!results.length) return;
   // Expo's push service: free, no key. Tokens it says are dead are dropped.
