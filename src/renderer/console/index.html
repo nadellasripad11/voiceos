@@ -10,6 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>J.A.R.V.I.S.</title>
   <link rel="stylesheet" href="console.css" />
+  <link rel="stylesheet" href="orbit.css" />
 </head>
 <body>
 
@@ -26,99 +27,16 @@
   The stage is drawn at 1672 x 941 — the size of the design it copies — and
   scaled to fit the window. Positions below are that design's, in pixels, so
   the proportions hold at any window size instead of drifting apart.
+
+  The centre is the website's (orbit.css, orbit.js): the singularity behind
+  everything, and the request, the name, the reply and the composer in front.
 -->
+<div class="orbit-back" aria-hidden="true">
+  <div class="ambient-light"></div>
+  <canvas id="singularity"></canvas>
+</div>
+
 <main class="stage" id="stage">
-
-  <!-- Ink smoke, drawn once by scripts/render-scene-art.js. It is larger than
-       the stage so a window that is not 16:9 still has smoke in its edges. -->
-  <img class="smoke" id="smoke" src="art/smoke.webp" alt="" draggable="false" />
-
-  <!-- ===== the centre: line, rings, orb, satellites ===== -->
-  <div class="axis" aria-hidden="true">
-    <svg viewBox="0 0 1672 941" class="axis-svg">
-      <line class="axis-line" x1="836" y1="0" x2="836" y2="941" />
-      <g class="axis-dots">
-        <circle cx="836" cy="45" r="4" />
-        <circle cx="836" cy="79" r="4.5" />
-        <circle cx="836" cy="112" r="1.6" />
-        <circle cx="836" cy="137" r="1.2" />
-        <circle cx="836" cy="162" r="3.6" />
-        <circle cx="836" cy="207" r="5.2" />
-        <circle cx="836" cy="232" r="1.4" />
-        <circle cx="836" cy="620" r="1.4" />
-        <circle cx="836" cy="646" r="5.2" />
-        <circle cx="836" cy="691" r="3.6" />
-        <circle cx="836" cy="716" r="1.4" />
-      </g>
-      <circle class="ring ring-outer" cx="836" cy="425" r="265" />
-      <circle class="ring ring-inner" cx="836" cy="425" r="218" />
-      <circle class="ring ring-ticks" cx="836" cy="425" r="232" />
-      <circle class="ring ring-level" id="levelRing" cx="836" cy="425" r="190" />
-
-      <!-- the light beam either side of the orb -->
-      <defs>
-        <linearGradient id="beamL" x1="0" x2="1">
-          <stop offset="0" stop-color="#fff" stop-opacity="0" />
-          <stop offset="0.65" stop-color="#e9f2ff" stop-opacity="0.7" />
-          <stop offset="1" stop-color="#ffffff" stop-opacity="1" />
-        </linearGradient>
-        <linearGradient id="beamR" x1="1" x2="0">
-          <stop offset="0" stop-color="#fff" stop-opacity="0" />
-          <stop offset="0.65" stop-color="#e9f2ff" stop-opacity="0.7" />
-          <stop offset="1" stop-color="#ffffff" stop-opacity="1" />
-        </linearGradient>
-      </defs>
-      <rect class="beam" x="300" y="423.6" width="370" height="2.8" fill="url(#beamL)" />
-      <rect class="beam" x="1002" y="423.6" width="300" height="2.8" fill="url(#beamR)" />
-
-      <!-- satellites: small dark bodies, two of them with their own orbits -->
-      <g class="sat-orbits">
-        <circle cx="522" cy="597" r="50" />
-        <circle cx="1152" cy="518" r="45" />
-        <path d="M1004 600 a 34 34 0 0 1 22 52" />
-      </g>
-    </svg>
-    <i class="sat" data-x="630" data-y="238" data-r="16"></i>
-    <i class="sat" data-x="522" data-y="597" data-r="21"></i>
-    <i class="sat" data-x="1152" data-y="518" data-r="18"></i>
-    <i class="sat" data-x="1112" data-y="620" data-r="6"></i>
-    <i class="sat" data-x="1158" data-y="640" data-r="7"></i>
-    <i class="sat" data-x="375" data-y="320" data-r="6"></i>
-    <i class="sat" data-x="953" data-y="686" data-r="3.5"></i>
-    <i class="sat" data-x="966" data-y="92" data-r="3"></i>
-    <i class="sat" data-x="1215" data-y="441" data-r="3.5"></i>
-    <i class="sat" data-x="430" data-y="552" data-r="2.5"></i>
-  </div>
-
-  <!-- The inside of the orb turns slowly; the canvas over it draws the live
-       rim, which is the part that answers the microphone. -->
-  <div class="orb-core"><img src="art/core.webp" alt="" draggable="false" /></div>
-  <canvas id="orb" class="orb" width="520" height="520" aria-hidden="true"></canvas>
-
-  <!-- ===== top left: name ===== -->
-  <header class="brand">
-    <i class="brand-ring"></i>
-    <div>
-      <div class="brand-name">J.A.R.V.I.S.</div>
-      <div class="brand-sub">Just a rather very intelligent system</div>
-    </div>
-  </header>
-
-  <!-- ===== the five phases of a request ===== -->
-  <ol class="phases" id="phases">
-    <li data-phase="listening">Listening</li>
-    <li data-phase="analysing">Analysing</li>
-    <li data-phase="reasoning">Reasoning</li>
-    <li data-phase="planning">Planning</li>
-    <li data-phase="acting">Acting</li>
-  </ol>
-
-  <!-- ===== left: greeting and navigation ===== -->
-  <section class="hello">
-    <h1 class="greeting" id="greeting">Good<br />evening.</h1>
-    <p class="motto"><span>Think</span><span>Plan</span><span>Create</span><span>Execute</span></p>
-    <i class="rule"></i>
-  </section>
 
   <nav class="nav" aria-label="Sections">
     <button class="nav-item is-active" data-view="home">
@@ -271,31 +189,35 @@
     </div>
   </section>
 
-  <!-- ===== bottom centre: the conversation itself ===== -->
-  <section class="prompt">
-    <div class="prompt-kicker" id="kicker">Good evening.</div>
-    <div class="prompt-line" id="promptLine">How can I help you today?</div>
-    <div class="caption" id="coreCaption" hidden></div>
-    <form class="ask" id="askForm" autocomplete="off">
-      <button type="button" class="ask-mic" id="askMic" title="Speak" aria-label="Speak">
-        <svg viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3" /><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5v3" /></svg>
-      </button>
-      <input id="askInput" type="text" placeholder="Speak or type a command..." spellcheck="false" />
-      <button type="submit" class="ask-send" id="askSend" title="Send" aria-label="Send">
-        <svg viewBox="0 0 24 24"><path d="M6 12h11.5M13 7.5l4.5 4.5-4.5 4.5" /></svg>
-      </button>
-    </form>
+</main>
+
+<div class="orbit-front">
+  <section class="request-island glass" aria-label="Your request">
+    <div class="request-method" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M2 10v4M7 6v12M12 2v20M17 6v12M22 10v4" /></svg></div>
+    <div class="request-content">
+      <p id="currentRequest">What would you like to do?</p>
+      <div class="request-status"><span class="status-ring"></span><span id="requestStatus">Ask me anything, sir.</span></div>
+    </div>
   </section>
 
-  <!-- ===== bottom right ===== -->
-  <aside class="tagline">
-    <span>A calmer</span><span>brighter</span><span>more capable</span><span>you</span>
-    <i class="rule"></i>
-  </aside>
+  <div class="orbit-wordmark" aria-label="J.A.R.V.I.S."><span>J</span><span>A</span><span>R</span><span class="core-letter"></span><span>V</span><span>I</span><span>S</span></div>
 
-  <!-- what it is on: brain and state, under the orb, small -->
-  <div class="brain-chip" id="brainChip" title="The model answering right now"></div>
-</main>
+  <section class="response-island glass" aria-label="Jarvis's reply" aria-live="polite">
+    <div class="response-avatar" aria-hidden="true"><span class="orbit-ring"></span></div>
+    <div class="response-text" id="coreCaption">Good evening, sir. How can I help?</div>
+  </section>
+
+  <form class="composer glass" id="askForm" autocomplete="off">
+    <input id="askInput" type="text" placeholder="Type a message or ask me anything..." spellcheck="false" aria-label="Your message" />
+    <button type="button" class="round-button mic-button" id="askMic" title="Speak" aria-label="Speak">
+      <svg class="icon" viewBox="0 0 24 24"><rect class="solid" x="9" y="2" width="6" height="13" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v4M9 23h6" /></svg>
+    </button>
+    <button type="submit" class="round-button" id="askSend" title="Send" aria-label="Send">
+      <svg class="icon" viewBox="0 0 24 24"><path d="m21 3-7 18-3-8-8-3 18-7ZM11 13 21 3" /></svg>
+    </button>
+  </form>
+</div>
+<div class="grain" aria-hidden="true"></div>
 
 <!-- What the browser agent is doing, live, while it works. -->
 <div class="browserview glass" id="browserView" hidden>
@@ -328,6 +250,7 @@
 
 <script src="audio.js"></script>
 <script src="scene.js"></script>
+<script src="orbit.js"></script>
 <script src="console.js"></script>
 </body>
 </html>

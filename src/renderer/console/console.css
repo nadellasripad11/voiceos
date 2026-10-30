@@ -347,7 +347,7 @@ html:not([data-state="idle"]) .phases li.is-on::before { animation: pip 1.1s eas
 
 .nav {
   left: 40px;
-  top: 360px;
+  top: 140px; /* where the website has it, now there is no greeting above */
   width: 282px;
   display: flex;
   flex-direction: column;

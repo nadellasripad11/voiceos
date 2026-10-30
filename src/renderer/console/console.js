@@ -20,13 +20,9 @@ const $ = (id) => document.getElementById(id);
 const el = {
   root: document.documentElement,
 
-  greeting: $('greeting'),
-  kicker: $('kicker'),
-  promptLine: $('promptLine'),
-  prompt: document.querySelector('.prompt'),
+  request: $('currentRequest'),
+  requestStatus: $('requestStatus'),
   caption: $('coreCaption'),
-  levelRing: $('levelRing'),
-  phases: $('phases'),
   lights: $('lights'),
 
   voiceTitle: $('voiceTitle'),
@@ -44,7 +40,6 @@ const el = {
   vitals: $('vitalsList'),
   vitalsEmpty: $('vitalsEmpty'),
   envList: $('envList'),
-  brainChip: $('brainChip'),
 
   logList: $('logList'),
   logEmpty: $('logEmpty'),
@@ -71,20 +66,14 @@ function partOfDay(d = new Date()) {
 
 let lastWeather = '';
 
-/** The clock, the date, the greeting. Once a second is plenty. */
+const greetingLine = () => `Good ${partOfDay()}, sir. How can I help?`;
+
+/** The clock, the date, the greeting in the reply. Once a second is plenty. */
 function tick() {
   const now = new Date();
   el.clockTime.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   el.clockDate.textContent = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  const part = partOfDay(now);
-  const word = part[0].toUpperCase() + part.slice(1);
-  if (el.greeting.dataset.part !== part) {
-    el.greeting.dataset.part = part;
-    el.greeting.textContent = '';
-    el.greeting.append('Good', document.createElement('br'), `${part}.`);
-  }
-  if (!captionShown) el.kicker.textContent = `Good ${part}.`;
-  el.greeting.title = `Good ${word}`;
+  if (!captionShown) el.caption.textContent = greetingLine();
 }
 
 // --- state -----------------------------------------------------------------
@@ -94,11 +83,11 @@ function tick() {
  * lit when that is genuinely the step it is on.
  */
 const STATES = {
-  idle: { phase: null, title: "I'm listening..", sub: 'Say "hey jarvis", type, or share a thought.' },
-  listening: { phase: 'listening', title: 'Go ahead, sir.', sub: 'I stop listening when you pause.' },
-  thinking: { phase: 'reasoning', title: 'Working on it.', sub: 'One moment.' },
-  speaking: { phase: 'acting', title: 'Speaking.', sub: 'Talk over me to interrupt.' },
-  error: { phase: null, title: 'Something went wrong.', sub: '' }
+  idle: { phase: null, title: "I'm listening..", sub: 'Say "hey jarvis", type, or share a thought.', status: 'Ask me anything, sir.' },
+  listening: { phase: 'listening', title: 'Go ahead, sir.', sub: 'I stop listening when you pause.', status: 'Listening…' },
+  thinking: { phase: 'reasoning', title: 'Working on it.', sub: 'One moment.', status: 'Working on it…' },
+  speaking: { phase: 'acting', title: 'Speaking.', sub: 'Talk over me to interrupt.', status: 'Answering.' },
+  error: { phase: null, title: 'Something went wrong.', sub: '', status: 'Something went wrong.' }
 };
 
 /** Which status light each phase turns on. */
@@ -112,6 +101,7 @@ const LIGHT_FOR = {
 
 let currentState = 'idle';
 let currentPhase = null;
+let singularity = null; // the website's scene, made at first paint
 /**
  * Whether a conversation is running.
  *
@@ -127,7 +117,9 @@ function setState(name, { sub = null, phase } = {}) {
   el.root.dataset.state = name;
   el.voiceTitle.textContent = spec.title;
   el.voiceSub.textContent = sub === null ? spec.sub : sub;
+  el.requestStatus.textContent = spec.status;
   scene.setState(name);
+  if (singularity) singularity.wake();
   setPhase(phase === undefined ? spec.phase : phase);
   for (const li of el.lights.children) {
     if (li.dataset.light === 'synthesis') li.classList.toggle('is-on', name === 'speaking');
@@ -137,7 +129,6 @@ function setState(name, { sub = null, phase } = {}) {
 
 function setPhase(phase) {
   currentPhase = phase;
-  for (const li of el.phases.children) li.classList.toggle('is-on', li.dataset.phase === phase);
   const light = phase ? LIGHT_FOR[phase] : null;
   for (const li of el.lights.children) {
     if (li.dataset.light === 'synthesis' || li.dataset.light === 'memory') continue;
@@ -145,32 +136,33 @@ function setPhase(phase) {
   }
 }
 
+let micLevel = 0;
 function setLevel(v) {
-  const level = Math.max(0, Math.min(1, v));
-  el.levelRing.style.setProperty('--level', level.toFixed(3));
-  scene.setLevel(level);
+  micLevel = Math.max(0, Math.min(1, v));
+  scene.setLevel(micLevel);
 }
 
 /**
- * What was heard or said, in the place the greeting sits.
+ * What was heard goes in the request at the top; what Jarvis says goes in the
+ * reply above the composer, which shows the greeting when there is nothing.
  *
  * @param {string} text
- * @param {'you'|'jarvis'|'fault'|null} who what the small blue line says
+ * @param {'you'|'jarvis'|'fault'|null} who
  */
 let captionShown = false;
 function caption(text, who = null) {
   const value = String(text || '').trim();
+  if (who === 'you') {
+    el.request.textContent = value || 'What would you like to do?';
+    return;
+  }
   captionShown = Boolean(value);
-  el.prompt.classList.toggle('has-caption', captionShown);
-  el.caption.hidden = !captionShown;
   if (!captionShown) {
-    el.caption.textContent = '';
-    el.kicker.textContent = `Good ${partOfDay()}.`;
+    el.caption.textContent = greetingLine();
     return;
   }
   renderRich(el.caption, value);
   el.caption.scrollTop = el.caption.scrollHeight;
-  el.kicker.textContent = who === 'you' ? 'You said' : who === 'fault' ? 'Fault' : 'J.A.R.V.I.S.';
 }
 
 // --- tasks -----------------------------------------------------------------
@@ -435,7 +427,6 @@ let lastVitals = null;
 function renderVitals(v) {
   if (!v) return;
   lastVitals = v;
-  if (v.brain) el.brainChip.textContent = v.brain;
 
   const ok = {
     language: v.brain && v.brain !== 'none' ? 'yes' : 'no',
@@ -934,6 +925,19 @@ if (audio) {
 
 // --- first paint -----------------------------------------------------------
 scene.start();
+// The website's singularity, moved the way the site moves it: busier while
+// thinking, following the microphone while listening, pulsing while speaking.
+// Unlike the site it holds still while idle: always moving cost ~30% of a
+// core on this laptop, and even redrawing the still picture ~20%.
+if (window.createSingularity) {
+  window.ORBIT_IDLE_MS = 0;
+  singularity = window.createSingularity(document.getElementById('singularity'), {
+    getMotion: () => currentState !== 'idle',
+    getEnergy: () => (currentState === 'thinking' ? 0.8 : currentState === 'speaking' ? 0.5 : 0),
+    getSpeechLevel: () => (currentState === 'speaking' ? 0.3 + 0.2 * Math.sin(performance.now() / 110) : currentState === 'listening' ? micLevel : 0),
+    getState: () => (currentState === 'error' ? 'idle' : currentState)
+  });
+}
 setState('idle');
 tick();
 setInterval(tick, 1000);
