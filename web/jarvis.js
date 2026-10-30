@@ -512,14 +512,17 @@ function b64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000)
 
 async function startVoice() {
   if (voice) { stopVoice(); return; }
+  // Claimed before the first await: the wake word fires several times per
+  // "Hey Jarvis", and each one would otherwise open a session of its own.
+  const v = voice = { playAt: 0, sources: [], heard: '', said: '', idle: null };
   setState('thinking', 'Connecting…');
   try {
     const pass = await post('/api/live-token', { tz: TZ, memory: memory.slice(-60) });
-    const mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    const ws = new WebSocket(`${LIVE_URL}?access_token=${encodeURIComponent(pass.token)}`);
-    const inCtx = new AudioContext();
-    const outCtx = new AudioContext({ sampleRate: 24000 });
-    const v = voice = { ws, mic, inCtx, outCtx, playAt: 0, sources: [], heard: '', said: '', idle: null };
+    const mic = v.mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    if (voice !== v) { for (const t of mic.getTracks()) t.stop(); return; }
+    const ws = v.ws = new WebSocket(`${LIVE_URL}?access_token=${encodeURIComponent(pass.token)}`);
+    v.inCtx = new AudioContext();
+    v.outCtx = new AudioContext({ sampleRate: 24000 });
 
     // The same setup the pass was made with (the server builds it).
     ws.onopen = () => ws.send(JSON.stringify({ setup: pass.setup }));
@@ -561,6 +564,7 @@ async function startVoice() {
     ws.onclose = () => { if (voice === v) stopVoice(); };
     ws.onerror = () => { if (voice === v) { stopVoice(); setState('error', 'The voice connection dropped.'); } };
   } catch (err) {
+    if (voice !== v) return;
     stopVoice();
     setState('error', err.name === 'NotAllowedError' ? 'Allow the microphone to talk to Jarvis.' : err.message);
   }

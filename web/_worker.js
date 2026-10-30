@@ -253,21 +253,59 @@ function ago(t) {
   return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
 }
 
-async function news(topic) {
-  const tail = 'hl=en-US&gl=US&ceid=US:en';
-  const url = topic ? `https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&${tail}` : `https://news.google.com/rss?${tail}`;
-  const xml = await (await fetch(url, { headers: { 'User-Agent': UA } })).text();
+// Google News turns Cloudflare away (503), so these step in when it does.
+const FEEDS = [
+  ['BBC News', 'https://feeds.bbci.co.uk/news/rss.xml'],
+  ['BBC News', 'https://feeds.bbci.co.uk/news/world/rss.xml'],
+  ['BBC News', 'https://feeds.bbci.co.uk/news/technology/rss.xml'],
+  ['BBC News', 'https://feeds.bbci.co.uk/news/business/rss.xml'],
+  ['NPR', 'https://feeds.npr.org/1001/rss.xml'],
+  ['The Guardian', 'https://www.theguardian.com/world/rss']
+];
+// A topic that is a whole section gets that section, not a keyword match.
+const SECTIONS = [
+  [/\b(tech|technology|ai|gadgets?|computers?)\b/i, ['BBC News', 'https://feeds.bbci.co.uk/news/technology/rss.xml'], ['The Guardian', 'https://www.theguardian.com/technology/rss']],
+  [/\b(business|economy|markets?|stocks?|finance)\b/i, ['BBC News', 'https://feeds.bbci.co.uk/news/business/rss.xml'], ['The Guardian', 'https://www.theguardian.com/business/rss']],
+  [/\b(science|space|environment|climate)\b/i, ['BBC News', 'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml'], ['The Guardian', 'https://www.theguardian.com/science/rss']],
+  [/\b(sports?|football|soccer|cricket|nba|nfl)\b/i, ['BBC Sport', 'https://feeds.bbci.co.uk/sport/rss.xml'], ['The Guardian', 'https://www.theguardian.com/sport/rss']],
+  [/\b(world|international|global)\b/i, ['BBC News', 'https://feeds.bbci.co.uk/news/world/rss.xml'], ['The Guardian', 'https://www.theguardian.com/world/rss']],
+  [/\b(us|usa|america|american)\b/i, ['BBC News', 'https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml'], ['NPR', 'https://feeds.npr.org/1001/rss.xml']]
+];
+
+async function feed(url, name) {
+  const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(6000) });
+  if (!res.ok) return [];
+  const xml = await res.text();
   const field = (item, n) => { const m = item.match(new RegExp(`<${n}[^>]*>([\\s\\S]*?)</${n}>`)); return m ? strip(m[1]) : ''; };
-  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 8).map(([, it]) => {
-    const source = field(it, 'source');
+  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(([, it]) => {
+    const source = field(it, 'source') || name;
     let title = field(it, 'title');
     if (source && title.endsWith(` - ${source}`)) title = title.slice(0, -(source.length + 3));
-    const t = Date.parse(field(it, 'pubDate'));
-    return { title, source, url: field(it, 'link'), when: t ? ago(t) : '' };
-  });
-  if (!items.length) return { text: 'I could not reach the news just now.' };
+    return { title, source, url: field(it, 'link'), t: Date.parse(field(it, 'pubDate')) || 0, about: `${title} ${field(it, 'description')}` };
+  }).filter((n) => n.title);
+}
+
+async function news(topic) {
+  const tail = 'hl=en-US&gl=US&ceid=US:en';
+  let items = await feed(topic ? `https://news.google.com/rss/search?q=${encodeURIComponent(topic)}&${tail}` : `https://news.google.com/rss?${tail}`, 'Google News').catch(() => []);
+  let from = 'Google News';
+  if (!items.length) {
+    from = 'BBC, NPR and The Guardian';
+    const section = topic && SECTIONS.find(([re]) => re.test(topic));
+    const feeds = section ? section.slice(1) : topic ? FEEDS : FEEDS.filter(([, u]) => !/technology|business/.test(u));
+    const all = (await Promise.all(feeds.map(([name, u]) => feed(u, name).catch(() => [])))).flat();
+    const seen = new Set();
+    items = all.filter((n) => !seen.has(n.title) && seen.add(n.title));
+    if (topic && !section) {
+      const words = topic.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
+      items = items.filter((n) => words.some((w) => n.about.toLowerCase().includes(w)));
+    }
+    items.sort((a, b) => b.t - a.t);
+  }
+  items = items.slice(0, 8).map((n) => ({ ...n, when: n.t ? ago(n.t) : '' }));
+  if (!items.length) return { text: topic ? `No headlines about "${topic}" just now.` : 'I could not reach the news just now.' };
   return {
-    text: fence(items.map((n, i) => `${i + 1}. ${n.title} (${n.source}, ${n.when})`).join('\n'), 'Google News'),
+    text: fence(items.map((n, i) => `${i + 1}. ${n.title} (${n.source}, ${n.when})`).join('\n'), from),
     found: items.map((n) => ({ title: n.title, subtitle: [n.source, n.when].filter(Boolean).join(' · '), url: n.url }))
   };
 }
