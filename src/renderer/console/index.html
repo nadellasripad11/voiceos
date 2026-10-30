@@ -192,7 +192,7 @@
 </main>
 
 <div class="orbit-front">
-  <section class="request-island glass" aria-label="Your request">
+  <section class="request-island glass" aria-label="Your request" id="requestIsland" title="Click to edit and ask again">
     <div class="request-method" aria-hidden="true"><svg class="icon" viewBox="0 0 24 24"><path d="M2 10v4M7 6v12M12 2v20M17 6v12M22 10v4" /></svg></div>
     <div class="request-content">
       <p id="currentRequest">What would you like to do?</p>
@@ -204,7 +204,8 @@
 
   <section class="response-island glass" aria-label="Jarvis's reply" aria-live="polite">
     <div class="response-avatar" aria-hidden="true"><span class="orbit-ring"></span></div>
-    <div class="response-text" id="coreCaption">Good evening, sir. How can I help?</div>
+    <div class="response-text" id="coreCaption" title="Click to copy">Good evening, sir. How can I help?</div>
+    <button class="retry-button" id="retryButton" type="button" title="Ask again, worked out afresh" hidden>Try again</button>
   </section>
 
   <form class="composer glass" id="askForm" autocomplete="off">

@@ -111,6 +111,11 @@ class WebLink {
     return { name, data: Buffer.from(await res.arrayBuffer()) };
   }
 
+  /** A notification on the website and phone ("your download finished"). */
+  async notify(title, body) {
+    return this.call('/api/link/notify', { title, body });
+  }
+
   /** One exchange said on the laptop, into the shared history. */
   logConvo(question, answer) {
     if (!question || !answer) return;

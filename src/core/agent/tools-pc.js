@@ -73,6 +73,8 @@ $top = Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First
   {
     name: 'close_app',
     appId: 'system',
+    mutating: true,
+    confirm: ({ name } = {}) => ({ title: `Close ${name || 'that app'}?`, detail: 'Anything unsaved in it is lost.' }),
     description: 'Close (end) an app that is open or frozen, by its name, e.g. "chrome", "spotify".',
     parameters: obj({ name: str('The app or process name') }, ['name']),
     run: async ({ name }) => {
@@ -85,6 +87,8 @@ $top = Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First
   {
     name: 'tidy_downloads',
     appId: 'system',
+    mutating: true,
+    confirm: () => ({ title: 'Tidy your Downloads folder?', detail: 'Loose files are moved into folders by type. Nothing is deleted.' }),
     description: 'Tidy the Downloads folder: sort loose files into folders by type (Documents, Images, Videos, Installers, Archives, Other). Nothing is deleted.',
     parameters: obj({}),
     run: async () => {
@@ -153,6 +157,8 @@ $top = Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First
   {
     name: 'use_computer',
     appId: 'system',
+    mutating: true,
+    confirm: ({ goal } = {}) => ({ title: 'Use your mouse and keyboard?', detail: String(goal || '') }),
     description: 'Operate any app on the laptop with the mouse and keyboard, looking at the screen, for things no other tool does (e.g. "in Word, make the title bold", "change a setting in Discord"). Slower; prefer specific tools when they exist.',
     parameters: obj({ goal: str('What to get done, in plain words') }, ['goal']),
     run: async ({ goal }, { signal } = {}) => {

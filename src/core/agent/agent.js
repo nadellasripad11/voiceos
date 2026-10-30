@@ -22,6 +22,10 @@ const { fence, looksLikeInjection, isUntrustedTool } = require('./untrusted');
 const { relevantTools } = require('./relevant');
 const { digest } = require('./digest');
 const { asFollowUp } = require('./followup');
+const { normalise } = require('./shortcuts');
+
+/** "No, I meant…", "that's wrong": the last answer missed, and a rule may be worth keeping. */
+const CORRECTION = /^(no\b|nope\b|wrong\b|not that\b|that'?s (wrong|not (it|right|what i (meant|asked|said|wanted)))|i (meant|said|asked for)\b|you got (it|that) wrong|actually,? i (meant|wanted))/i;
 
 const SYSTEM_PROMPT = `You are VoiceOS, a voice assistant running on the user's own computer.
 
@@ -49,8 +53,19 @@ Where instructions come from:
   false by definition.`;
 
 class Agent {
-  constructor({ provider, config, bridge, browser, tts, connections, mcp = null, ambient = null, memory = null, logger = console, requestConfirmation }) {
+  constructor({ provider, config, bridge, browser, tts, connections, mcp = null, ambient = null, memory = null, shortcuts = null, watcher = null, activity = null, secret = null, logger = console, requestConfirmation }) {
     this.memory = memory;
+    // Asks learned or taught as shortcuts, replayed without the model.
+    this.shortcuts = shortcuts;
+    // Things being watched for ("tell me when the download is done").
+    this.watcher = watcher;
+    // Every tool run, exactly, for Settings → Activity.
+    this.activity = activity;
+    // Keys for services the user added in Settings, by name.
+    this.secret = secret;
+    /** The shortcut that answered the last question, so a correction can drop it. */
+    this.lastShortcut = null;
+    this.depth = 0;
     this.provider = provider;
     this.config = config;
     this.bridge = bridge;
@@ -112,8 +127,82 @@ ${facts}`;
       get webLink() { return self.webLink || null; },
       mcp: this.mcp,
       ambient: this.ambient,
+      shortcuts: this.shortcuts,
+      watcher: this.watcher,
+      secret: this.secret,
+      lastAnswer: () => (self.history.length ? self.history[self.history.length - 1].answer : ''),
       logger: this.logger
     };
+  }
+
+  /**
+   * Replays a shortcut: a learned one runs its tool calls again, a taught one
+   * runs each of its sentences as its own ask. No model either way, unless a
+   * taught sentence is new and needs one.
+   */
+  async replay(entry, question, { started, signal, onStage }) {
+    onStage('thinking');
+    this.logger.info?.(`[agent] shortcut "${entry.key}" (${entry.kind})`);
+    this.shortcuts.used(entry);
+    const said = [];
+    let ok = true;
+    if (entry.kind === 'taught') {
+      for (const sentence of entry.sentences) {
+        if (signal && signal.aborted) break;
+        const r = await this.run(sentence, { signal, onStage });
+        said.push(r.answer);
+        if (r.cancelled) { ok = false; break; }
+      }
+    } else {
+      const byName = new Map(buildTools(this.ctx).map((t) => [t.name, t]));
+      for (const step of entry.steps) {
+        const tool = byName.get(step.tool);
+        if (!tool) { ok = false; said.push(`I can't ${step.tool.replace(/_/g, ' ')} any more.`); break; }
+        const r = await this.execute(tool, step.args, { signal });
+        said.push(r.summary);
+        if (r.ok === false) { ok = false; break; }
+      }
+    }
+    // Dropped if it no longer works, so the next time goes to the model again.
+    if (!ok && entry.kind === 'learned') this.shortcuts.forget(entry.key, { exact: true });
+    this.lastShortcut = entry;
+    const summary = said.filter(Boolean).join(' ') || 'Done.';
+    return this.finish({ question, result: { ok, summary, spoken: summary }, started, model: 'shortcut', usedRouter: true, signal });
+  }
+
+  /**
+   * After "no, I meant…": drops the shortcut that gave the wrong answer, and
+   * asks the model once whether the correction is a lasting preference worth
+   * a rule ("open means bring it to the front"). Not awaited: the corrected
+   * ask is answered first.
+   */
+  async learnFromCorrection(previous, correction, usedShortcut = null) {
+    if (usedShortcut && usedShortcut.key === normalise(previous.question)) this.shortcuts.forget(usedShortcut.key, { exact: true });
+    if (!this.memory || !(await this.provider.available().catch(() => false))) return;
+    try {
+      const res = await this.provider.chat({
+        model: this.config.get('llm.agentModel') || this.config.get('llm.model'),
+        messages: [
+          { role: 'system', content: 'A user corrected their voice assistant. If the correction shows a lasting preference, reply with ONE short rule for next time (under 20 words), e.g. "When asked to open an app that is already open, bring it to the front." If it is a one-off change of mind or a new request, reply NONE.' },
+          { role: 'user', content: `They asked: ${previous.question}\nThe assistant answered: ${String(previous.answer).slice(0, 400)}\nThen they said: ${correction}` }
+        ],
+        temperature: 0,
+        maxTokens: 50
+      });
+      const rule = String(res.text || '').trim().replace(/^rule:\s*/i, '');
+      if (!rule || /^none\b/i.test(rule) || rule.length > 200) return;
+      this.memory.add([`Rule: ${rule}`], 'correction');
+      this.logger.info?.(`[agent] learned a rule from a correction: ${rule}`);
+    } catch (err) { this.logger.debug?.(`[agent] no rule from the correction: ${err.message}`); }
+  }
+
+  /**
+   * Try again: forget a shortcut Jarvis learned for this, so it is worked out
+   * afresh. A phrase the user taught stays: it is theirs to change.
+   */
+  forgetShortcutFor(question) {
+    const s = this.shortcuts && this.shortcuts.match(question);
+    return s && s.kind === 'learned' ? this.shortcuts.forget(question, { exact: true }) : 0;
   }
 
   /**
@@ -131,6 +220,23 @@ ${facts}`;
     const continued = asFollowUp(question, this.lastRouted);
     if (continued) this.logger.info?.(`[agent] continuing: "${question}" -> "${continued}"`);
     const asked = continued || question;
+
+    // "No, I meant…": the last answer was wrong. Its shortcut goes, a rule may
+    // be kept, and the correction itself is answered as usual, with the
+    // history that makes "the left one" mean something.
+    const previous = this.history[this.history.length - 1];
+    const correcting = Boolean(previous) && CORRECTION.test(asked) && this.depth === 0;
+    if (correcting) this.learnFromCorrection(previous, asked, this.lastShortcut).catch(() => {});
+    this.lastShortcut = null;
+
+    // 0. A shortcut: learned from an earlier ask, or taught ("focus mode").
+    // Not inside a taught phrase's own steps beyond one level, so a phrase
+    // that names itself cannot loop.
+    const shortcut = !correcting && this.depth < 2 && this.shortcuts ? this.shortcuts.match(asked) : null;
+    if (shortcut) {
+      this.depth++;
+      try { return await this.replay(shortcut, question, { started, signal, onStage }); } finally { this.depth--; }
+    }
 
     // 1. Deterministic route.
     const routed = matchIntent(asked, tools, this.config);
@@ -165,7 +271,7 @@ ${facts}`;
         if (canThink) {
           this.logger.info?.(`[agent] ${routed.tool.name} found nothing; asking the model instead`);
           return this.runModelLoop(asked, tools, {
-            started, signal, onStage, onPartial,
+            started, signal, onStage, onPartial, learn: !correcting,
             onOpening: null   // something has already been said while it ran
           });
         }
@@ -200,7 +306,7 @@ ${facts}`;
     // the loop stays quiet rather than saying two things in a row; when it
     // has not, the loop gets to say something specific about the tool.
     return this.runModelLoop(asked, tools, {
-      started, signal, onStage, onPartial,
+      started, signal, onStage, onPartial, learn: !correcting,
       onOpening: willStream ? onOpening : null
     });
   }
@@ -264,7 +370,7 @@ ${facts}`;
     return `No ${provider} API key is set. Add a free one in Settings, under Agent.`;
   }
 
-  async runModelLoop(question, tools, { started, signal, onStage, onPartial = null, onOpening = null }) {
+  async runModelLoop(question, tools, { started, signal, onStage, onPartial = null, onOpening = null, learn = true }) {
     // Only the tools the question could need. All 34 came to ~2,266 tokens per
     // request against Groq's 8,000-a-minute free tier, so the fourth question
     // in a minute got a 429 and fell back to a local model slower than the
@@ -286,6 +392,8 @@ ${facts}`;
     ];
 
     const found = [];
+    // What was called, for keeping this ask as a shortcut if it was simple.
+    const calls = [];
     // Only the first tool gets an opening: a loop that calls three tools
     // should not narrate all three.
     let spokeOpening = false;
@@ -334,6 +442,7 @@ ${facts}`;
         const answer = res.text || 'I am not sure how to answer that.';
         if (onPartial) onPartial(answer, { done: true });
         this.remember(question, answer);
+        if (learn && this.shortcuts) this.shortcuts.learn(question, calls);
         return { question, answer, found, ms: Date.now() - started, model, usedRouter: false, injections };
       }
 
@@ -363,6 +472,7 @@ ${facts}`;
         }
 
         const result = await this.execute(tool, call.args, { signal });
+        calls.push({ name: tool.name, args: call.args || {}, ok: result.ok !== false && !result.cancelled });
         if (result.found) found.push(...result.found);
 
         let content = result.summary || (result.ok ? 'Done.' : 'That did not work.');
@@ -434,11 +544,18 @@ ${facts}`;
       this.config.get('agent.confirmBeforeActions', true) &&
       !(tool.autoConfirm && this.config.get('agent.autoConfirmReadOnly', true));
 
+    // Every run goes in the activity log with what was approved, exactly.
+    const log = (result, approved) => {
+      if (this.activity) this.activity.add({ tool: tool.name, args, ok: result.ok, summary: result.summary, approved });
+      return result;
+    };
+
+    let approved = null;
     if (needsConfirm && this.requestConfirmation) {
       const prompt = tool.confirm ? tool.confirm(args) : { title: `Run ${tool.name}?`, detail: JSON.stringify(args) };
-      const approved = await this.requestConfirmation(prompt);
+      approved = Boolean(await this.requestConfirmation(prompt));
       if (!approved) {
-        return { ok: false, summary: 'Cancelled, nothing was changed.', cancelled: true };
+        return log({ ok: false, summary: 'Cancelled, nothing was changed.', cancelled: true }, false);
       }
     }
 
@@ -446,12 +563,12 @@ ${facts}`;
       // progress: a long tool (the browser) says what it is doing, step by
       // step, so the console can show it and the app knows it is alive.
       const progress = (detail) => { try { this.onStage && this.onStage('thinking', { tool: tool.name, step: String(detail) }); } catch { /* display only */ } };
-      return await tool.run(args, { signal, progress });
+      return log(await tool.run(args, { signal, progress }), approved);
     } catch (err) {
       this.logger.warn?.(`[agent] tool ${tool.name} failed: ${err.message}`);
       // Out of free quota is said as Jarvis says it, not as a failure.
-      if (err.code === 'rate_limited') return { ok: false, summary: err.message, spoken: err.message };
-      return { ok: false, summary: `That did not work: ${err.message}` };
+      if (err.code === 'rate_limited') return log({ ok: false, summary: err.message, spoken: err.message }, approved);
+      return log({ ok: false, summary: `That did not work: ${err.message}` }, approved);
     }
   }
 

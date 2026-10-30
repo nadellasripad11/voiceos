@@ -39,6 +39,10 @@
         <svg viewBox="0 0 16 16" class="nav-icon"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>
         Apps
       </button>
+      <button class="nav-item" data-panel="skills">
+        <svg viewBox="0 0 16 16" class="nav-icon"><path d="M9 1.5 3.5 9H8l-1 5.5L12.5 7H8z"/></svg>
+        Skills
+      </button>
     </nav>
 
     <div class="sidebar-foot">
@@ -337,6 +341,10 @@
           <div><strong>Private Mode</strong><span>No screen capture, nothing written to disk</span></div>
           <label class="switch"><input type="checkbox" data-key="privacy.privateMode" /><span></span></label>
         </div>
+        <div class="switch-row">
+          <div><strong>Hide Jarvis from screen sharing</strong><span>Never shows in Zoom, Discord, recordings or screenshots</span></div>
+          <label class="switch"><input type="checkbox" data-key="ui.hideFromScreenShare" /><span></span></label>
+        </div>
         <div class="actions-row">
           <button class="btn-quiet" data-open="userData">Open data folder</button>
           <button class="btn-danger" id="clearData">Delete all transcripts</button>
@@ -352,9 +360,68 @@
       <div id="appGrid"></div>
     </section>
 
+    <!-- Skills -->
+    <section class="panel" data-panel="skills">
+      <h1>Skills</h1>
+      <p class="lede">Shortcuts Jarvis has learned, services you've plugged in, and everything it did.</p>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">⚡</span>
+          <div>
+            <h2>Shortcuts</h2>
+            <p>Ask for something simple once and next time it runs instantly, with no AI. Teach your own: "when I say focus mode, close Discord and open Notion".</p>
+          </div>
+        </div>
+        <ul class="skill-list" id="shortcutList"></ul>
+        <p class="empty" id="shortcutEmpty">Nothing yet.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">🔌</span>
+          <div>
+            <h2>Plug-ins</h2>
+            <p>Any app with a web API (its address, a key, and one line about it), or any MCP server. Reading runs freely; anything that changes something asks first.</p>
+          </div>
+        </div>
+        <ul class="skill-list" id="serviceList"></ul>
+        <form class="skill-form" id="serviceForm" autocomplete="off">
+          <h3>Add a web API</h3>
+          <label class="row"><span class="row-label">Name</span><input type="text" id="svcName" placeholder="Home Assistant" required /></label>
+          <label class="row"><span class="row-label">Address</span><input type="text" id="svcUrl" inputmode="url" placeholder="http://homeassistant.local:8123" required /></label>
+          <label class="row"><span class="row-label">What it is</span><input type="text" id="svcAbout" placeholder="my smart home: lights, doors, sensors" /></label>
+          <label class="row"><span class="row-label">Key</span><input type="password" id="svcKey" placeholder="Optional; kept with your other keys" /></label>
+          <label class="row"><span class="row-label">Key header</span><input type="text" id="svcHeader" placeholder="Authorization (sent as Bearer)" /></label>
+          <div class="actions-row"><button class="btn-quiet" type="submit">Add</button></div>
+        </form>
+        <form class="skill-form" id="mcpForm" autocomplete="off">
+          <h3>Add an MCP server</h3>
+          <label class="row"><span class="row-label">Name</span><input type="text" id="mcpName" placeholder="notes" required /></label>
+          <label class="row"><span class="row-label">Command</span><input type="text" id="mcpCommand" placeholder="npx -y @modelcontextprotocol/server-memory" required /></label>
+          <div class="actions-row"><button class="btn-quiet" type="submit">Add and start</button></div>
+        </form>
+        <p class="note" id="pluginNote"></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span class="card-icon">📜</span>
+          <div>
+            <h2>Activity</h2>
+            <p>Every action Jarvis took, exactly, and whether you approved it. Deletes always go to the Recycle Bin.</p>
+          </div>
+        </div>
+        <ul class="activity-list" id="activityList"></ul>
+        <p class="empty" id="activityEmpty">Nothing yet.</p>
+        <div class="actions-row"><button class="btn-quiet" id="openActivity">Open the full log</button><button class="btn-quiet" id="refreshActivity">Refresh</button></div>
+      </div>
+    </section>
+
   </main>
 
   <script src="connect.js"></script>
   <script src="settings.js"></script>
+  <script src="skills.js"></script>
 </body>
 </html>

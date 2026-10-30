@@ -642,8 +642,12 @@ function Invoke-BridgeCommand($req) {
         Start-Process -FilePath $name | Out-Null
         return @{ ok = $true; via = 'path'; name = $name }
       }
-      $cmd = Get-Command $name -ErrorAction SilentlyContinue
-      if ($cmd -and $cmd.CommandType -in @('Application', 'ExternalScript')) {
+      # Only real programs. Git for Windows puts an extensionless "notepad"
+      # shell script on PATH, and starting that opened "Pick an app" instead.
+      $cmd = Get-Command $name -CommandType Application -All -ErrorAction SilentlyContinue |
+        Where-Object { [IO.Path]::GetExtension($_.Source) -in @('.exe', '.com', '.bat', '.cmd') } |
+        Select-Object -First 1
+      if ($cmd) {
         Start-Process -FilePath $cmd.Source | Out-Null
         return @{ ok = $true; via = 'path-lookup'; name = $cmd.Source }
       }

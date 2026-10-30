@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld('voiceos', {
   pickFolder: (multiple) => ipcRenderer.invoke('voiceos:pick-folder', { multiple }),
   setAppEnabled: (id, enabled) => ipcRenderer.invoke('voiceos:set-app-enabled', { id, enabled }),
 
+  // Skills: shortcuts Jarvis learned or was taught, plug-ins, what it did.
+  shortcuts: (forget) => ipcRenderer.invoke('voiceos:shortcuts', { forget }),
+  activity: (n) => ipcRenderer.invoke('voiceos:activity', n),
+  openActivity: () => ipcRenderer.invoke('voiceos:open-activity'),
+  reloadPlugins: () => ipcRenderer.invoke('voiceos:mcp-reload'),
+  pluginStatus: () => ipcRenderer.invoke('voiceos:mcp-status'),
+
   onSpeak: (fn) => {
     const wrapped = (_e, payload) => fn(payload);
     ipcRenderer.on('speak', wrapped);

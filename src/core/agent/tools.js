@@ -30,6 +30,7 @@ const { sendMessage } = require('./messaging');
 const { canvasTools } = require('./tools-canvas');
 const { googleTools } = require('./tools-google');
 const { pcTools } = require('./tools-pc');
+const { desktopTools } = require('./tools-desktop');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1079,6 +1080,7 @@ const OPENINGS = {
   weather: 'Checking the forecast.',
   fetch_page: 'Reading that page.',
   search_files: 'Looking through your files.',
+  search_file_contents: 'Searching inside your files.',
   read_screen: 'Reading your screen.',
   point_and_ask: 'Having a look.',
   // These three go through the PowerShell bridge, which is not instant: asking
@@ -1118,6 +1120,7 @@ function buildTools(ctx) {
   const all = [
     ...systemTools(ctx),
     ...(ctx.bridge ? pcTools(ctx) : []),
+    ...(ctx.bridge ? desktopTools(ctx) : []),
     ...smallTalkTools(ctx),
     ...weatherTools(ctx),
     ...messagingTools(ctx),

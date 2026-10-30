@@ -177,7 +177,9 @@ const UNTRUSTED_TOOLS = new Set([
   // Course content is written by people and rendered as HTML.
   'list_grades', 'list_coursework', 'canvas_grades', 'canvas_assignments',
   // Documents and filenames, which may have come from anywhere.
-  'search_drive', 'search_files',
+  'search_drive', 'search_files', 'search_file_contents',
+  // Whatever was copied, and whatever a service the user added sends back.
+  'read_clipboard', 'call_service',
   // The task agent reads pages to do its work.
   'do_task'
 ]);

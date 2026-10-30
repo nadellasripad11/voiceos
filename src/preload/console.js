@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('voiceos', {
   getConfig: () => ipcRenderer.invoke('voiceos:get-config'),
   getStatus: () => ipcRenderer.invoke('voiceos:console-status'),
   ask: (question) => ipcRenderer.invoke('voiceos:ask', question),
+  // Asks again, without any shortcut that gave the last answer.
+  retry: (question) => ipcRenderer.invoke('voiceos:retry', question),
   cancel: () => ipcRenderer.invoke('voiceos:cancel'),
 
   // --- the microphone, which used to belong to the island ---

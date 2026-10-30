@@ -23,6 +23,7 @@ const el = {
   request: $('currentRequest'),
   requestStatus: $('requestStatus'),
   caption: $('coreCaption'),
+  retry: $('retryButton'),
   lights: $('lights'),
 
   voiceTitle: $('voiceTitle'),
@@ -102,6 +103,8 @@ const LIGHT_FOR = {
 let currentState = 'idle';
 let currentPhase = null;
 let singularity = null; // the website's scene, made at first paint
+/** The latest question answered, for Try again, editing and up-arrow. */
+let lastQuestion = '';
 /**
  * Whether a conversation is running.
  *
@@ -571,6 +574,7 @@ vo.onAgentResult((payload = {}) => {
   renderLog();
   renderFound(payload.found);
   caption(payload.answer || '', 'jarvis');
+  if (payload.question && payload.question !== 'Watching') { lastQuestion = payload.question; el.retry.hidden = false; }
   settleSoon();
 });
 
@@ -725,7 +729,7 @@ $('confirmYes').addEventListener('click', () => answerConfirm(true));
 $('confirmNo').addEventListener('click', () => answerConfirm(false));
 
 // --- things a person clicks ------------------------------------------------
-function ask(question) {
+function ask(question, { retry = false } = {}) {
   const q = String(question || '').trim();
   if (!q) return;
   // Typing is the clearest thing a person can do: whatever was being heard or
@@ -736,7 +740,7 @@ function ask(question) {
   addTask('Thinking about a typed question');
   setState('thinking');
   caption(q, 'you');
-  vo.ask(q).then((r) => {
+  (retry && vo.retry ? vo.retry(q) : vo.ask(q)).then((r) => {
     if (r && r.ok === false && r.reason) {
       finishTasks({ outcome: r.reason, failed: true });
       setState('error', { sub: r.reason });
@@ -754,6 +758,29 @@ el.askForm.addEventListener('submit', (e) => {
   if (!question) return;
   el.askInput.value = '';
   ask(question);
+});
+
+// --- try again, edit, recall, copy ------------------------------------------
+// Try again asks the latest question afresh (dropping a shortcut that gave the
+// answer); clicking the request puts it back in the box to edit; up-arrow in
+// an empty box recalls it; clicking the reply copies it.
+el.retry.addEventListener('click', () => { if (lastQuestion) ask(lastQuestion, { retry: true }); });
+$('requestIsland').addEventListener('click', () => {
+  if (!lastQuestion) return;
+  el.askInput.value = lastQuestion;
+  el.askInput.focus();
+  el.askInput.select();
+});
+el.askInput.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp' && !el.askInput.value && lastQuestion) { e.preventDefault(); el.askInput.value = lastQuestion; }
+});
+el.caption.addEventListener('click', () => {
+  if (!captionShown) return;
+  navigator.clipboard.writeText(el.caption.innerText).then(() => {
+    el.caption.classList.add('is-copied');
+    el.requestStatus.textContent = 'Copied.';
+    setTimeout(() => el.caption.classList.remove('is-copied'), 400);
+  }).catch(() => {});
 });
 
 // Speaking is the same as Ctrl+Shift: press to start, press again to send.

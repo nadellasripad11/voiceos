@@ -196,6 +196,30 @@ function placeFrom(raw) {
 }
 
 const INTENTS = [
+  // --- Clipboard, watching ----------------------------------------------------
+  // Before point-and-ask, which would read "copy that" as a question about
+  // whatever is under the cursor.
+  { re: /^(?:copy (?:that|it|this)(?: to (?:the |my )?clipboard)?|copy (?:the |your )?(?:last )?answer)[.!]?$/i, tool: 'copy_to_clipboard', args: () => ({}) },
+  { re: /^(?:what(?:'s| is) (?:on |in )?(?:my |the )?clipboard|what did i (?:just )?copy)\b[^?]*\??$/i, tool: 'read_clipboard', args: () => ({}) },
+
+  { re: /^(?:forget|delete|remove|drop) (?:the |my |that )?(?:shortcut|phrase)(?: for| called)?\s+["“']?(.+?)["”']?[.!]?$/i, tool: 'forget_shortcut', args: (m) => ({ phrase: m[1] }) },
+  { re: /^(?:what|which|list|show(?: me)?)(?: are)?(?: my| the| your)? (?:shortcuts|phrases)\b[^?]{0,40}\??$/i, tool: 'forget_shortcut', args: () => ({}) },
+
+  // --- Teaching a phrase -------------------------------------------------------
+  // "When I say focus mode, close Discord and open my to-do list." Parsed here
+  // rather than by the model, which read it as a question and searched the web.
+  {
+    re: /^(?:when(?:ever)?|if) i say\s+["“']?(.+?)["”']?\s*[,:]\s*(?:(?:you should|please|just|go and|then)\s+)?(.+?)[.!]?$/i,
+    tool: 'teach_shortcut',
+    args: (m) => ({
+      phrase: m[1].trim(),
+      steps: m[2].split(/\s*,\s*(?:and\s+)?(?:then\s+)?|\s+and\s+(?:then\s+)?|\s+then\s+/i).map((s) => s.trim()).filter(Boolean)
+    })
+  },
+  { re: /^(?:stop|cancel) watching(?: (?:it|that|everything))?[.!]?$/i, tool: 'stop_watching', args: () => ({}) },
+  { re: /^(?:what are you watching(?: for)?|are you watching anything)\??$/i, tool: 'stop_watching', args: () => ({ list_only: true }) },
+  { re: /^(?:tell|let) me (?:know )?when (?:the |my )?downloads? (?:is |are |has |have )?(?:done|finished|complete|completed)[.!]?$/i, tool: 'watch_for', args: () => ({ what: 'download' }) },
+
   // --- Point and ask ------------------------------------------------------
   // A demonstrative with no noun behind it means the cursor is the subject:
   // "who is that" only has an answer if you know where the user is pointing.

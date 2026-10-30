@@ -81,3 +81,9 @@ html[data-state="listening"] .mic-button { background: #0f2750; color: white; bo
 
 @keyframes orbit-turn { to { transform: rotate(360deg); } }
 @keyframes orbit-listen { 50% { box-shadow: 0 0 0 8px #0f275009; } }
+
+/* Try again, under the latest answer; the request and reply are clickable. */
+.retry-button { position: absolute; right: 14px; bottom: -13px; padding: 4px 11px; border-radius: 12px; font: 500 11.5px/1.2 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #3e5f98; background: rgba(255,255,255,.92); border: 1px solid rgba(40,56,82,.12); box-shadow: 0 4px 14px rgba(15,39,80,.08); cursor: pointer; transition: background .2s; }
+.retry-button:hover { background: #fff; }
+.request-island, .response-text { cursor: pointer; }
+.response-text.is-copied { opacity: .55; transition: opacity .2s; }

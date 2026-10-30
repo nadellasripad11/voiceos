@@ -255,6 +255,10 @@ const DEFAULTS = {
     trustedServers: []
   },
 
+  // Web APIs added in Settings → Skills: { name, url, about, keyHeader }.
+  // Their keys are kept with the other credentials, as service:<name>.
+  services: [],
+
   edit: {
     enabled: true,
     maxChars: 8000               // a selection larger than this is refused
@@ -287,6 +291,9 @@ const DEFAULTS = {
 
   ui: {
     theme: 'system',
+    // Jarvis's own windows never appear in screen shares, recordings or
+    // screenshots, including the ones Jarvis takes to read the screen.
+    hideFromScreenShare: true,
     notchPosition: 'top',         // top | bottom
     showWaveform: true,
     // The island appears when you summon it and goes away again, rather

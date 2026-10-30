@@ -10,7 +10,7 @@
  * It owns the microphone, so closing it hides it rather than destroying it.
  *
  */
-const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, screen, shell, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, screen, shell, nativeImage, dialog, Notification } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -30,6 +30,9 @@ const { Agent } = require('../core/agent/agent');
 const { GeminiLive, pcmToWav } = require('../core/live/gemini-live');
 const { heardNoise } = require('../core/live/noise');
 const { Memory } = require('../core/agent/memory');
+const { Shortcuts } = require('../core/agent/shortcuts');
+const { Watcher } = require('../core/agent/watcher');
+const { ActivityLog } = require('../core/agent/activity-log');
 const { createProvider } = require('../core/llm/provider');
 const { PiperTts, speakableSummary } = require('../core/tts/piper');
 const { SpeechStream } = require('../core/tts/stream');
@@ -186,6 +189,36 @@ function buildProvider() {
  * API keys live outside config.json so that exporting or sharing settings never
  * leaks a key. Only ever read and written locally.
  */
+/** The key for a service added in Settings → Skills, or nothing. */
+function serviceSecret(name) {
+  try { return String(readCredentials()[name] || ''); } catch { return ''; }
+}
+
+/**
+ * Something being watched for happened (or can no longer be watched): a
+ * notification here and on the phone, the line said and shown, and then the
+ * follow-up, if one was asked for and nothing else is going on.
+ */
+function watchFired(watch, line) {
+  logger.info(`[watch] ${line}`);
+  try { if (Notification.isSupported()) new Notification({ title: 'J.A.R.V.I.S.', body: line }).show(); } catch { /* no notifications here */ }
+  if (services.webLink && services.webLink.notify) services.webLink.notify('Jarvis', line).catch(() => {});
+  broadcast('agent-result', { question: 'Watching', answer: line, found: [] });
+  speak(line, { force: true }).catch(() => {});
+  if (watch.then && session.phase === PHASE.IDLE) {
+    setTimeout(() => runAgent(watch.then, { signal: new AbortController().signal, source: 'watch' }).catch((err) => logger.warn(`[watch] follow-up failed: ${err.message}`)), 2500);
+  }
+}
+
+/**
+ * Keeps a window out of screen shares, recordings and screenshots (Jarvis's
+ * own included, so reading the screen never reads Jarvis). A setting, for
+ * anyone who wants to show it off on a call.
+ */
+function hideFromCapture(win) {
+  try { win.setContentProtection(Boolean(config.get('ui.hideFromScreenShare', true))); } catch { /* not supported */ }
+}
+
 function writeCredentials(next) {
   fs.writeFileSync(paths.credentials, JSON.stringify(next, null, 2), 'utf8');
   try { fs.chmodSync(paths.credentials, 0o600); } catch { /* best effort on Windows */ }
@@ -212,6 +245,9 @@ async function initServices() {
   ensureDirs();
   services.bridge = getBridge({ logger });
   services.memory = new Memory({ file: path.join(paths.userData, 'memory.json'), logger });
+  services.shortcuts = new Shortcuts({ file: path.join(paths.userData, 'shortcuts.json'), logger });
+  services.activity = new ActivityLog({ file: path.join(paths.logs, 'activity.jsonl'), logger });
+  services.watcher = new Watcher({ bridge: services.bridge, logger, tmpDir: paths.tmp, onFire: watchFired });
   services.stt = buildSpeech();
   // Interim transcripts are thrown away a second after they appear, so they
   // use the smallest model whatever the configured one is.
@@ -248,6 +284,10 @@ async function initServices() {
     mcp: services.mcp,
     ambient: services.ambient,
     memory: services.memory,
+    shortcuts: services.shortcuts,
+    watcher: services.watcher,
+    activity: services.activity,
+    secret: serviceSecret,
     logger,
     requestConfirmation
   });
@@ -335,6 +375,10 @@ function reloadServices() {
     mcp: services.mcp,
     ambient: services.ambient,
     memory: services.memory,
+    shortcuts: services.shortcuts,
+    watcher: services.watcher,
+    activity: services.activity,
+    secret: serviceSecret,
     logger,
     requestConfirmation
   });
@@ -362,6 +406,7 @@ function reloadServices() {
   // replacements too, or the first reply after a settings change is slow again.
   services.tts.prewarm().catch(() => {});
   warmBrain();
+  for (const w of [windows.console, windows.rail, windows.highlight]) if (w && !w.isDestroyed()) hideFromCapture(w);
   broadcast('settings-changed', config.all());
 }
 
@@ -432,6 +477,7 @@ function createHighlight() {
   // forward: false — this overlay must never take a click, not even to itself.
   win.setIgnoreMouseEvents(true, { forward: false });
   pipeConsole(win, 'highlight');
+  hideFromCapture(win);
   win.loadFile(path.join(__dirname, '..', 'renderer', 'highlight', 'index.html'));
 
   win.on('closed', () => { windows.highlight = null; });
@@ -555,6 +601,7 @@ function createRail() {
   // pass through, which is what lets the strip notice the pointer.
   win.setIgnoreMouseEvents(true, { forward: true });
   pipeConsole(win, 'rail');
+  hideFromCapture(win);
   win.loadFile(path.join(__dirname, '..', 'renderer', 'rail', 'index.html'));
 
   win.on('closed', () => { windows.rail = null; });
@@ -652,6 +699,7 @@ function createConsole({ focus = true } = {}) {
   });
 
   pipeConsole(win, 'console');
+  hideFromCapture(win);
   win.loadFile(path.join(__dirname, '..', 'renderer', 'console', 'index.html'));
   win.once('ready-to-show', () => { if (focus) win.show(); else win.showInactive(); });
   /** Settles once the page's listeners exist, so a session can be started into it. */
@@ -1246,6 +1294,21 @@ function registerIpc() {
     return Object.fromEntries(Object.keys(creds).map((p) => [p, Boolean(creds[p])]));
   });
 
+  // --- Settings → Skills: shortcuts, plug-ins, the activity log ---
+  ipcMain.handle('voiceos:shortcuts', (_e, { forget } = {}) => {
+    if (forget) services.shortcuts.forget(String(forget), { exact: true });
+    return services.shortcuts.list();
+  });
+  ipcMain.handle('voiceos:activity', (_e, n = 80) => services.activity.recent(Math.min(500, Number(n) || 80)));
+  ipcMain.handle('voiceos:open-activity', () => shell.openPath(services.activity.file));
+  /** After the plug-in list changes: every server stopped and started again. */
+  ipcMain.handle('voiceos:mcp-reload', async () => {
+    try { services.mcp.stop(); } catch { /* none running */ }
+    const r = await services.mcp.start().catch((err) => ({ error: err.message }));
+    return { ...r, status: services.mcp.status() };
+  });
+  ipcMain.handle('voiceos:mcp-status', () => services.mcp.status());
+
   ipcMain.handle('voiceos:open-path', (_e, which) => {
     const target = { userData: paths.userData, models: paths.models, logs: paths.logs }[which];
     if (!target) throw new Error(`Unknown path '${which}'`);
@@ -1431,7 +1494,13 @@ function registerIpc() {
   });
 
   /** A typed question takes the same path as a spoken one. */
-  ipcMain.handle('voiceos:ask', async (_e, text) => {
+  ipcMain.handle('voiceos:retry', (_e, text) => {
+    if (services.agent) services.agent.forgetShortcutFor(String(text || ''));
+    return askTyped(text);
+  });
+  ipcMain.handle('voiceos:ask', (_e, text) => askTyped(text));
+
+  async function askTyped(text) {
     const question = String(text || '').trim();
     if (!question) return { ok: false };
     // A typed question wins. It used to be refused as "busy" whenever a
@@ -1464,7 +1533,7 @@ function registerIpc() {
       // Only if nothing newer has taken over in the meantime.
       if (session === mine) resetSession('finished');
     }
-  });
+  }
 
   /** Speaks a line on demand, for the replay button. */
   ipcMain.handle('voiceos:speak', async (_e, text) => {

@@ -496,6 +496,8 @@ async function linkApi(request, env, url) {
   if (path === '/api/link/file') return json(await saveFile(env, body));
   if (path.startsWith('/api/link/files/')) return getFile(env, path.slice('/api/link/files/'.length));
   if (path === '/api/link/convo') { await logConvo(env, body.question, body.answer, 'laptop'); return json({ ok: true }); }
+  // Something the laptop was watching for happened.
+  if (path === '/api/link/notify') { await notify(env, String(body.title || 'Jarvis').slice(0, 80), String(body.body || '').slice(0, 500)); return json({ ok: true }); }
   if (path === '/api/link/confirm') {
     await notify(env, 'Jarvis needs your approval', String(body.title || 'Approve this?'));
     await env.DB.prepare("UPDATE jobs SET status = 'confirm', title = ?, detail = ?, answer = NULL WHERE id = ?")
